@@ -92,8 +92,8 @@ module.exports = class virwox extends Exchange {
             const id = this.safeString (market, 'instrumentID');
             const baseId = this.safeString (market, 'longCurrency');
             const quoteId = this.safeString (market, 'shortCurrency');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             result.push ({
                 'id': id,
@@ -116,13 +116,9 @@ module.exports = class virwox extends Exchange {
         for (let i = 0; i < balances.length; i++) {
             const balance = balances[i];
             const currencyId = this.safeString (balance, 'currency');
-            const code = this.commonCurrencyCode (currencyId);
-            const total = this.safeFloat (balance, 'balance');
-            const account = {
-                'free': total,
-                'used': 0.0,
-                'total': total,
-            };
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['total'] = this.safeFloat (balance, 'balance');
             result[code] = account;
         }
         return this.parseBalance (result);
@@ -197,11 +193,8 @@ module.exports = class virwox extends Exchange {
         };
     }
 
-    parseTrade (trade, symbol = undefined) {
-        let timestamp = this.safeInteger (trade, 'time');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+    parseTrade (trade, market = undefined) {
+        const timestamp = this.safeTimestamp (trade, 'time');
         const id = this.safeString (trade, 'tid');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'vol');
@@ -211,6 +204,10 @@ module.exports = class virwox extends Exchange {
                 cost = price * amount;
             }
         }
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         return {
             'id': id,
             'timestamp': timestamp,
@@ -219,6 +216,7 @@ module.exports = class virwox extends Exchange {
             'symbol': symbol,
             'type': undefined,
             'side': undefined,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
@@ -230,13 +228,14 @@ module.exports = class virwox extends Exchange {
     async fetchTrades (symbol, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         const market = this.market (symbol);
-        const response = await this.publicGetGetRawTradeData (this.extend ({
+        const request = {
             'instrument': symbol,
             'timespan': 3600,
-        }, params));
+        };
+        const response = await this.publicGetGetRawTradeData (this.extend (request, params));
         const result = this.safeValue (response, 'result', {});
         const trades = this.safeValue (result, 'data', []);
-        return this.parseTrades (trades, market);
+        return this.parseTrades (trades, market, since, limit);
     }
 
     async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
@@ -290,7 +289,7 @@ module.exports = class virwox extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body, response) {
+    handleErrors (code, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (code === 200) {
             if ((body[0] === '{') || (body[0] === '[')) {
                 if ('result' in response) {

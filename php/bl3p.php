@@ -82,17 +82,12 @@ class bl3p extends Exchange {
             $account = $this->account ();
             $account['free'] = $this->safe_float($available, 'value');
             $account['total'] = $this->safe_float($balance, 'value');
-            if ($account['total']) {
-                if ($account['free']) {
-                    $account['used'] = $account['total'] - $account['free'];
-                }
-            }
             $result[$code] = $account;
         }
         return $this->parse_balance($result);
     }
 
-    public function parse_bid_ask ($bidask, $priceKey = 0, $amountKey = 0) {
+    public function parse_bid_ask ($bidask, $priceKey = 0, $amountKey = 1) {
         return [
             $bidask[$priceKey] / 100000.0,
             $bidask[$amountKey] / 100000000.0,
@@ -114,10 +109,7 @@ class bl3p extends Exchange {
             'market' => $this->market_id($symbol),
         );
         $ticker = $this->publicGetMarketTicker (array_merge ($request, $params));
-        $timestamp = $this->safe_integer($ticker, 'timestamp');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($ticker, 'timestamp');
         $last = $this->safe_float($ticker, 'last');
         return array (
             'symbol' => $symbol,
@@ -143,18 +135,41 @@ class bl3p extends Exchange {
         );
     }
 
-    public function parse_trade ($trade, $market) {
+    public function parse_trade ($trade, $market = null) {
         $id = $this->safe_string($trade, 'trade_id');
+        $timestamp = $this->safe_integer($trade, 'date');
+        $price = $this->safe_float($trade, 'price_int');
+        if ($price !== null) {
+            $price /= 100000.0;
+        }
+        $amount = $this->safe_float($trade, 'amount_int');
+        if ($amount !== null) {
+            $amount /= 100000000.0;
+        }
+        $cost = null;
+        if ($price !== null) {
+            if ($amount !== null) {
+                $cost = $amount * $price;
+            }
+        }
+        $symbol = null;
+        if ($market !== null) {
+            $symbol = $market['symbol'];
+        }
         return array (
             'id' => $id,
-            'timestamp' => $trade['date'],
-            'datetime' => $this->iso8601 ($trade['date']),
-            'symbol' => $market['symbol'],
+            'info' => $trade,
+            'timestamp' => $timestamp,
+            'datetime' => $this->iso8601 ($timestamp),
+            'symbol' => $symbol,
             'type' => null,
             'side' => null,
-            'price' => $trade['price_int'] / 100000.0,
-            'amount' => $trade['amount_int'] / 100000000.0,
-            'info' => $trade,
+            'order' => null,
+            'takerOrMaker' => null,
+            'price' => $price,
+            'amount' => $amount,
+            'cost' => $cost,
+            'fee' => null,
         );
     }
 

@@ -29,7 +29,6 @@ class theocean (Exchange):
             'countries': ['US'],
             'rateLimit': 3000,
             'version': 'v1',
-            'certified': True,
             'requiresWeb3': True,
             'timeframes': {
                 '5m': '300',
@@ -134,12 +133,12 @@ class theocean (Exchange):
         result = []
         for i in range(0, len(markets)):
             market = markets[i]
-            baseToken = self.safe_string(market, 'baseToken')
-            quoteToken = self.safe_string(market, 'quoteToken')
+            baseToken = self.safe_value(market, 'baseToken', {})
+            quoteToken = self.safe_value(market, 'quoteToken', {})
             baseId = self.safe_string(baseToken, 'address')
             quoteId = self.safe_string(quoteToken, 'address')
-            base = self.common_currency_code(self.safe_string(baseToken, 'symbol'))
-            quote = self.common_currency_code(self.safe_string(quoteToken, 'symbol'))
+            base = self.safe_currency_code(self.safe_string(baseToken, 'symbol'))
+            quote = self.safe_currency_code(self.safe_string(quoteToken, 'symbol'))
             symbol = base + '/' + quote
             id = baseId + '/' + quoteId
             baseDecimals = self.safe_integer(baseToken, 'decimals')
@@ -185,7 +184,7 @@ class theocean (Exchange):
     def parse_ohlcv(self, ohlcv, market=None, timeframe='5m', since=None, limit=None):
         baseDecimals = self.safe_integer(self.options['decimals'], market['base'], 18)
         return [
-            self.safe_integer(ohlcv, 'startTime') * 1000,
+            self.safe_timestamp(ohlcv, 'startTime'),
             self.safe_float(ohlcv, 'open'),
             self.safe_float(ohlcv, 'high'),
             self.safe_float(ohlcv, 'low'),
@@ -431,6 +430,8 @@ class theocean (Exchange):
         #         timestamp: "1532261686"                                                          }
         #
         timestamp = self.safe_integer(trade, 'lastUpdated')
+        if timestamp is not None:
+            timestamp /= 1000
         price = self.safe_float(trade, 'price')
         id = self.safe_string(trade, 'id')
         side = self.safe_string(trade, 'side')
@@ -817,7 +818,7 @@ class theocean (Exchange):
                 url += '?' + self.urlencode(query)
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, httpCode, reason, url, method, headers, body, response):
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody):
         if response is None:
             return  # fallback to default error handler
         # code 401 and plain body 'Authentication failed'(with single quotes)

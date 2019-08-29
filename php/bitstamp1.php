@@ -82,7 +82,7 @@ class bitstamp1 extends Exchange {
         }
         $this->load_markets();
         $orderbook = $this->publicGetOrderBook ($params);
-        $timestamp = intval ($orderbook['timestamp']) * 1000;
+        $timestamp = $this->safe_timestamp($orderbook, 'timestamp');
         return $this->parse_order_book($orderbook, $timestamp);
     }
 
@@ -92,7 +92,7 @@ class bitstamp1 extends Exchange {
         }
         $this->load_markets();
         $ticker = $this->publicGetTicker ($params);
-        $timestamp = intval ($ticker['timestamp']) * 1000;
+        $timestamp = $this->safe_timestamp($ticker, 'timestamp');
         $vwap = $this->safe_float($ticker, 'vwap');
         $baseVolume = $this->safe_float($ticker, 'volume');
         $quoteVolume = null;
@@ -125,10 +125,7 @@ class bitstamp1 extends Exchange {
     }
 
     public function parse_trade ($trade, $market = null) {
-        $timestamp = $this->safe_integer_2($trade, 'date', 'datetime');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp_2($trade, 'date', 'datetime');
         $side = ($trade['type'] === 0) ? 'buy' : 'sell';
         $orderId = $this->safe_string($trade, 'order_id');
         if (is_array($trade) && array_key_exists('currency_pair', $trade)) {
@@ -145,18 +142,24 @@ class bitstamp1 extends Exchange {
                 $cost = $price * $amount;
             }
         }
+        $symbol = null;
+        if ($market !== null) {
+            $symbol = $market['symbol'];
+        }
         return array (
             'id' => $id,
             'info' => $trade,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
-            'symbol' => $market['symbol'],
+            'symbol' => $symbol,
             'order' => $orderId,
             'type' => null,
             'side' => $side,
+            'takerOrMaker' => null,
             'price' => $price,
             'amount' => $amount,
             'cost' => $cost,
+            'fee' => null,
         );
     }
 
@@ -181,14 +184,11 @@ class bitstamp1 extends Exchange {
             $code = $codes[$i];
             $currency = $this->currency ($code);
             $currencyId = $currency['id'];
-            $total = $currencyId . '_balance';
-            $free = $currencyId . '_available';
-            $used = $currencyId . '_reserved';
             $account = $this->account ();
-            $account['free'] = $this->safe_float($balance, $free, 0.0);
-            $account['used'] = $this->safe_float($balance, $used, 0.0);
-            $account['total'] = $this->safe_float($balance, $total, 0.0);
-            $result[$currency] = $account;
+            $account['free'] = $this->safe_float($balance, $currencyId . '_available');
+            $account['used'] = $this->safe_float($balance, $currencyId . '_reserved');
+            $account['total'] = $this->safe_float($balance, $currencyId . '_balance');
+            $result[$code] = $account;
         }
         return $this->parse_balance($result);
     }

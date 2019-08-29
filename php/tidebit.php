@@ -148,8 +148,8 @@ class tidebit extends Exchange {
             $id = $this->safe_string($market, 'id');
             $symbol = $this->safe_string($market, 'name');
             list($baseId, $quoteId) = explode('/', $symbol);
-            $base = $this->common_currency_code($baseId);
-            $quote = $this->common_currency_code($quoteId);
+            $base = $this->safe_currency_code($baseId);
+            $quote = $this->safe_currency_code($quoteId);
             $result[] = array (
                 'id' => $id,
                 'symbol' => $symbol,
@@ -166,23 +166,15 @@ class tidebit extends Exchange {
     public function fetch_balance ($params = array ()) {
         $this->load_markets();
         $response = $this->privateGetMembersMe ($params);
-        $balances = $response['accounts'];
+        $balances = $this->safe_value($response, 'accounts');
         $result = array( 'info' => $balances );
-        for ($b = 0; $b < count ($balances); $b++) {
-            $balance = $balances[$b];
-            $currencyId = $balance['currency'];
-            $code = strtoupper($currencyId);
-            if (is_array($this->currencies_by_id) && array_key_exists($currencyId, $this->currencies_by_id)) {
-                $code = $this->currencies_by_id[$currencyId]['code'];
-            } else {
-                $code = $this->common_currency_code($code);
-            }
-            $account = array (
-                'free' => $this->safe_float($balance, 'balance'),
-                'used' => $this->safe_float($balance, 'locked'),
-                'total' => 0.0,
-            );
-            $account['total'] = $this->sum ($account['free'], $account['used']);
+        for ($i = 0; $i < count ($balances); $i++) {
+            $balance = $balances[$i];
+            $currencyId = $this->safe_string($balance, 'currency');
+            $code = $this->safe_currency_code($currencyId);
+            $account = $this->account ();
+            $account['free'] = $this->safe_float($balance, 'balance');
+            $account['used'] = $this->safe_float($balance, 'locked');
             $result[$code] = $account;
         }
         return $this->parse_balance($result);
@@ -194,21 +186,18 @@ class tidebit extends Exchange {
         $request = array (
             'market' => $market['id'],
         );
-        if ($limit === null) {
+        if ($limit !== null) {
             $request['limit'] = $limit; // default = 300
         }
         $request['market'] = $market['id'];
         $response = $this->publicGetDepth (array_merge ($request, $params));
-        $timestamp = $this->safe_integer($response, 'timestamp');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($response, 'timestamp');
         return $this->parse_order_book($response, $timestamp);
     }
 
     public function parse_ticker ($ticker, $market = null) {
-        $timestamp = $ticker['at'] * 1000;
-        $ticker = $ticker['ticker'];
+        $timestamp = $this->safe_timestamp($ticker, 'at');
+        $ticker = $this->safe_value($ticker, 'ticker', array());
         $symbol = null;
         if ($market !== null) {
             $symbol = $market['symbol'];
@@ -251,12 +240,10 @@ class tidebit extends Exchange {
                 $market = $this->markets_by_id[$id];
                 $symbol = $market['symbol'];
             } else {
-                $base = mb_substr ($id, 0, 3);
-                $quote = mb_substr ($id, 3, 6);
-                $base = strtoupper($base);
-                $quote = strtoupper($quote);
-                $base = $this->common_currency_code($base);
-                $quote = $this->common_currency_code($quote);
+                $baseId = mb_substr($id, 0, 3 - 0);
+                $quoteId = mb_substr($id, 3, 6 - 3);
+                $base = $this->safe_currency_code($baseId);
+                $quote = $this->safe_currency_code($quoteId);
                 $symbol = $base . '/' . $quote;
             }
             $ticker = $tickers[$id];
@@ -287,15 +274,18 @@ class tidebit extends Exchange {
         }
         return array (
             'id' => $id,
+            'info' => $trade,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
             'symbol' => $symbol,
             'type' => null,
             'side' => null,
+            'order' => null,
+            'takerOrMaker' => null,
             'price' => $price,
             'amount' => $amount,
             'cost' => $cost,
-            'info' => $trade,
+            'fee' => null,
         );
     }
 
@@ -332,11 +322,14 @@ class tidebit extends Exchange {
             'limit' => $limit,
         );
         if ($since !== null) {
-            $request['timestamp'] = $since;
+            $request['timestamp'] = intval ($since / 1000);
         } else {
             $request['timestamp'] = 1800000;
         }
         $response = $this->publicGetK (array_merge ($request, $params));
+        if ($response === 'null') {
+            return array();
+        }
         return $this->parse_ohlcvs($response, $market, $timeframe, $since, $limit);
     }
 
@@ -433,7 +426,7 @@ class tidebit extends Exchange {
         $request = array (
             'id' => $id,
             'currency_type' => 'coin', // or 'cash'
-            'currency' => strtolower($currency),
+            'currency' => $currency['id'],
             'body' => $amount,
             // 'address' => $address, // they don't allow withdrawing to direct addresses?
         );
@@ -484,7 +477,7 @@ class tidebit extends Exchange {
         return array( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response, $requestHeaders, $requestBody) {
         if ($code === 400) {
             $error = $this->safe_value($response, 'error');
             $errorCode = $this->safe_string($error, 'code');

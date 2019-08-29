@@ -12,7 +12,6 @@ module.exports = class theocean extends Exchange {
             'countries': [ 'US' ],
             'rateLimit': 3000,
             'version': 'v1',
-            'certified': true,
             'requiresWeb3': true,
             'timeframes': {
                 '5m': '300',
@@ -118,12 +117,12 @@ module.exports = class theocean extends Exchange {
         const result = [];
         for (let i = 0; i < markets.length; i++) {
             const market = markets[i];
-            const baseToken = this.safeString (market, 'baseToken');
-            const quoteToken = this.safeString (market, 'quoteToken');
+            const baseToken = this.safeValue (market, 'baseToken', {});
+            const quoteToken = this.safeValue (market, 'quoteToken', {});
             const baseId = this.safeString (baseToken, 'address');
             const quoteId = this.safeString (quoteToken, 'address');
-            const base = this.commonCurrencyCode (this.safeString (baseToken, 'symbol'));
-            const quote = this.commonCurrencyCode (this.safeString (quoteToken, 'symbol'));
+            const base = this.safeCurrencyCode (this.safeString (baseToken, 'symbol'));
+            const quote = this.safeCurrencyCode (this.safeString (quoteToken, 'symbol'));
             const symbol = base + '/' + quote;
             const id = baseId + '/' + quoteId;
             const baseDecimals = this.safeInteger (baseToken, 'decimals');
@@ -171,7 +170,7 @@ module.exports = class theocean extends Exchange {
     parseOHLCV (ohlcv, market = undefined, timeframe = '5m', since = undefined, limit = undefined) {
         const baseDecimals = this.safeInteger (this.options['decimals'], market['base'], 18);
         return [
-            this.safeInteger (ohlcv, 'startTime') * 1000,
+            this.safeTimestamp (ohlcv, 'startTime'),
             this.safeFloat (ohlcv, 'open'),
             this.safeFloat (ohlcv, 'high'),
             this.safeFloat (ohlcv, 'low'),
@@ -439,7 +438,10 @@ module.exports = class theocean extends Exchange {
         //       blockNumber: "8094822",
         //         timestamp: "1532261686"                                                          }
         //
-        const timestamp = this.safeInteger (trade, 'lastUpdated');
+        let timestamp = this.safeInteger (trade, 'lastUpdated');
+        if (timestamp !== undefined) {
+            timestamp /= 1000;
+        }
         const price = this.safeFloat (trade, 'price');
         const id = this.safeString (trade, 'id');
         const side = this.safeString (trade, 'side');
@@ -880,7 +882,7 @@ module.exports = class theocean extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (httpCode, reason, url, method, headers, body, response) {
+    handleErrors (httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return; // fallback to default error handler
         }

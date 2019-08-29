@@ -126,8 +126,8 @@ module.exports = class zaif extends Exchange {
             const id = this.safeString (market, 'currency_pair');
             const name = this.safeString (market, 'name');
             const [ baseId, quoteId ] = name.split ('/');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const precision = {
                 'amount': -Math.log10 (market['item_unit_step']),
@@ -170,13 +170,14 @@ module.exports = class zaif extends Exchange {
     async fetchBalance (params = {}) {
         await this.loadMarkets ();
         const response = await this.privatePostGetInfo (params);
-        const balances = response['return'];
-        const result = { 'info': balances };
-        const currencies = Object.keys (balances['funds']);
-        for (let i = 0; i < currencies.length; i++) {
-            const currencyId = currencies[i];
-            const balance = this.safeValue (balances['funds'], currencyId);
-            const code = this.commonCurrencyCode (currencyId.toUpperCase ());
+        const balances = this.safeValue (response, 'return', {});
+        const result = { 'info': response };
+        const funds = this.safeValue (balances, 'funds', {});
+        const currencyIds = Object.keys (funds);
+        for (let i = 0; i < currencyIds.length; i++) {
+            const currencyId = currencyIds[i];
+            const code = this.safeCurrencyCode (currencyId);
+            const balance = this.safeValue (funds, currencyId);
             const account = {
                 'free': balance,
                 'used': 0.0,
@@ -243,10 +244,7 @@ module.exports = class zaif extends Exchange {
     parseTrade (trade, market = undefined) {
         let side = this.safeString (trade, 'trade_type');
         side = (side === 'bid') ? 'buy' : 'sell';
-        let timestamp = this.safeInteger (trade, 'date');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (trade, 'date');
         const id = this.safeString2 (trade, 'id', 'tid');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'amount');
@@ -274,9 +272,12 @@ module.exports = class zaif extends Exchange {
             'symbol': symbol,
             'type': undefined,
             'side': side,
+            'order': undefined,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 
@@ -325,10 +326,7 @@ module.exports = class zaif extends Exchange {
     parseOrder (order, market = undefined) {
         let side = this.safeString (order, 'action');
         side = (side === 'bid') ? 'buy' : 'sell';
-        let timestamp = this.safeInteger (order, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (order, 'timestamp');
         if (!market) {
             const marketId = this.safeString (order, 'currency_pair');
             if (marketId in this.markets_by_id) {
@@ -477,7 +475,7 @@ module.exports = class zaif extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (httpCode, reason, url, method, headers, body, response) {
+    handleErrors (httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return;
         }

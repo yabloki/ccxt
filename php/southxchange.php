@@ -45,6 +45,7 @@ class southxchange extends Exchange {
                         'generatenewaddress',
                         'listOrders',
                         'listBalances',
+                        'listTransactions',
                         'placeOrder',
                         'withdraw',
                     ),
@@ -72,8 +73,8 @@ class southxchange extends Exchange {
             $market = $markets[$i];
             $baseId = $market[0];
             $quoteId = $market[1];
-            $base = $this->common_currency_code($baseId);
-            $quote = $this->common_currency_code($quoteId);
+            $base = $this->safe_currency_code($baseId);
+            $quote = $this->safe_currency_code($quoteId);
             $symbol = $base . '/' . $quote;
             $id = $symbol;
             $result[] = array (
@@ -93,25 +94,16 @@ class southxchange extends Exchange {
     public function fetch_balance ($params = array ()) {
         $this->load_markets();
         $response = $this->privatePostListBalances ($params);
-        if (!$response) {
-            throw new ExchangeError($this->id . ' fetchBalance got an unrecognized response');
-        }
         $result = array( 'info' => $response );
         for ($i = 0; $i < count ($response); $i++) {
             $balance = $response[$i];
-            $currencyId = $balance['Currency'];
-            $uppercaseId = strtoupper($currencyId);
-            $code = $this->common_currency_code($uppercaseId);
-            $free = $this->safe_float($balance, 'Available');
+            $currencyId = $this->safe_string($balance, 'Currency');
+            $code = $this->safe_currency_code($currencyId);
             $deposited = $this->safe_float($balance, 'Deposited');
             $unconfirmed = $this->safe_float($balance, 'Unconfirmed');
-            $total = $this->sum ($deposited, $unconfirmed);
-            $used = $total - $free;
-            $account = array (
-                'free' => $free,
-                'used' => $used,
-                'total' => $total,
-            );
+            $account = $this->account ();
+            $account['free'] = $this->safe_float($balance, 'Available');
+            $account['total'] = $this->sum ($deposited, $unconfirmed);
             $result[$code] = $account;
         }
         return $this->parse_balance($result);
@@ -188,10 +180,7 @@ class southxchange extends Exchange {
     }
 
     public function parse_trade ($trade, $market) {
-        $timestamp = $this->safe_integer($trade, 'At');
-        if ($timestamp !== null) {
-            $timestamp = $timestamp * 1000;
-        }
+        $timestamp = $this->safe_timestamp($trade, 'At');
         $price = $this->safe_float($trade, 'Price');
         $amount = $this->safe_float($trade, 'Amount');
         $cost = null;
@@ -215,8 +204,10 @@ class southxchange extends Exchange {
             'type' => null,
             'side' => $side,
             'price' => $price,
+            'takerOrMaker' => null,
             'amount' => $amount,
             'cost' => $cost,
+            'fee' => null,
         );
     }
 
@@ -234,8 +225,8 @@ class southxchange extends Exchange {
         $status = 'open';
         $baseId = $this->safe_string($order, 'ListingCurrency');
         $quoteId = $this->safe_string($order, 'ReferenceCurrency');
-        $base = $this->common_currency_code($baseId);
-        $quote = $this->common_currency_code($quoteId);
+        $base = $this->safe_currency_code($baseId);
+        $quote = $this->safe_currency_code($quoteId);
         $symbol = $base . '/' . $quote;
         $timestamp = null;
         $price = $this->safe_float($order, 'LimitPrice');
@@ -250,10 +241,7 @@ class southxchange extends Exchange {
             }
         }
         $type = 'limit';
-        $side = $this->safe_string($order, 'Type');
-        if ($side !== null) {
-            $side = strtolower($side);
-        }
+        $side = $this->safe_string_lower($order, 'Type');
         $id = $this->safe_string($order, 'Code');
         $result = array (
             'info' => $order,

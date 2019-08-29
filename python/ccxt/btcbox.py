@@ -4,6 +4,14 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.base.exchange import Exchange
+
+# -----------------------------------------------------------------------------
+
+try:
+    basestring  # Python 3
+except NameError:
+    basestring = str  # Python 2
+import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import PermissionDenied
@@ -85,13 +93,13 @@ class btcbox (Exchange):
             code = codes[i]
             currency = self.currency(code)
             currencyId = currency['id']
-            account = self.account()
             free = currencyId + '_balance'
-            used = currencyId + '_lock'
-            account['free'] = self.safe_float(response, free)
-            account['used'] = self.safe_float(response, used)
-            account['total'] = self.sum(account['free'], account['used'])
-            result[currency] = account
+            if free in response:
+                account = self.account()
+                used = currencyId + '_lock'
+                account['free'] = self.safe_float(response, free)
+                account['used'] = self.safe_float(response, used)
+                result[code] = account
         return self.parse_balance(result)
 
     def fetch_order_book(self, symbol, limit=None, params={}):
@@ -144,9 +152,7 @@ class btcbox (Exchange):
         return self.parse_ticker(response, market)
 
     def parse_trade(self, trade, market=None):
-        timestamp = self.safe_integer(trade, 'date')
-        if timestamp is not None:
-            timestamp *= 1000  # GMT time
+        timestamp = self.safe_timestamp(trade, 'date')
         symbol = None
         if market is not None:
             symbol = market['symbol']
@@ -168,9 +174,11 @@ class btcbox (Exchange):
             'symbol': symbol,
             'type': type,
             'side': side,
+            'takerOrMaker': None,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': None,
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -340,7 +348,7 @@ class btcbox (Exchange):
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, httpCode, reason, url, method, headers, body, response):
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody):
         if response is None:
             return  # resort to defaultErrorHandler
         # typical error response: {"result":false,"code":"401"}
@@ -355,3 +363,15 @@ class btcbox (Exchange):
         if errorCode in exceptions:
             raise exceptions[errorCode](feedback)
         raise ExchangeError(feedback)  # unknown message
+
+    def request(self, path, api='public', method='GET', params={}, headers=None, body=None):
+        response = self.fetch2(path, api, method, params, headers, body)
+        # sometimes the exchange returns whitespace prepended to json
+        # the code below removes excessive spaces
+        if isinstance(response, basestring):
+            response = response.split(' ')
+            response = ''.join(response)
+            if not self.is_json_encoded_object(response):
+                raise ExchangeError(self.id + ' ' + response)
+            response = json.loads(response)
+        return response

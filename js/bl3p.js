@@ -80,17 +80,12 @@ module.exports = class bl3p extends Exchange {
             const account = this.account ();
             account['free'] = this.safeFloat (available, 'value');
             account['total'] = this.safeFloat (balance, 'value');
-            if (account['total']) {
-                if (account['free']) {
-                    account['used'] = account['total'] - account['free'];
-                }
-            }
             result[code] = account;
         }
         return this.parseBalance (result);
     }
 
-    parseBidAsk (bidask, priceKey = 0, amountKey = 0) {
+    parseBidAsk (bidask, priceKey = 0, amountKey = 1) {
         return [
             bidask[priceKey] / 100000.0,
             bidask[amountKey] / 100000000.0,
@@ -112,10 +107,7 @@ module.exports = class bl3p extends Exchange {
             'market': this.marketId (symbol),
         };
         const ticker = await this.publicGetMarketTicker (this.extend (request, params));
-        let timestamp = this.safeInteger (ticker, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (ticker, 'timestamp');
         const last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
@@ -141,18 +133,41 @@ module.exports = class bl3p extends Exchange {
         };
     }
 
-    parseTrade (trade, market) {
+    parseTrade (trade, market = undefined) {
         const id = this.safeString (trade, 'trade_id');
+        const timestamp = this.safeInteger (trade, 'date');
+        let price = this.safeFloat (trade, 'price_int');
+        if (price !== undefined) {
+            price /= 100000.0;
+        }
+        let amount = this.safeFloat (trade, 'amount_int');
+        if (amount !== undefined) {
+            amount /= 100000000.0;
+        }
+        let cost = undefined;
+        if (price !== undefined) {
+            if (amount !== undefined) {
+                cost = amount * price;
+            }
+        }
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         return {
             'id': id,
-            'timestamp': trade['date'],
-            'datetime': this.iso8601 (trade['date']),
-            'symbol': market['symbol'],
+            'info': trade,
+            'timestamp': timestamp,
+            'datetime': this.iso8601 (timestamp),
+            'symbol': symbol,
             'type': undefined,
             'side': undefined,
-            'price': trade['price_int'] / 100000.0,
-            'amount': trade['amount_int'] / 100000000.0,
-            'info': trade,
+            'order': undefined,
+            'takerOrMaker': undefined,
+            'price': price,
+            'amount': amount,
+            'cost': cost,
+            'fee': undefined,
         };
     }
 

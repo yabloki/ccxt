@@ -81,7 +81,7 @@ module.exports = class bitstamp1 extends Exchange {
         }
         await this.loadMarkets ();
         const orderbook = await this.publicGetOrderBook (params);
-        const timestamp = parseInt (orderbook['timestamp']) * 1000;
+        const timestamp = this.safeTimestamp (orderbook, 'timestamp');
         return this.parseOrderBook (orderbook, timestamp);
     }
 
@@ -91,7 +91,7 @@ module.exports = class bitstamp1 extends Exchange {
         }
         await this.loadMarkets ();
         const ticker = await this.publicGetTicker (params);
-        const timestamp = parseInt (ticker['timestamp']) * 1000;
+        const timestamp = this.safeTimestamp (ticker, 'timestamp');
         const vwap = this.safeFloat (ticker, 'vwap');
         const baseVolume = this.safeFloat (ticker, 'volume');
         let quoteVolume = undefined;
@@ -124,10 +124,7 @@ module.exports = class bitstamp1 extends Exchange {
     }
 
     parseTrade (trade, market = undefined) {
-        let timestamp = this.safeInteger2 (trade, 'date', 'datetime');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp2 (trade, 'date', 'datetime');
         const side = (trade['type'] === 0) ? 'buy' : 'sell';
         const orderId = this.safeString (trade, 'order_id');
         if ('currency_pair' in trade) {
@@ -144,18 +141,24 @@ module.exports = class bitstamp1 extends Exchange {
                 cost = price * amount;
             }
         }
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         return {
             'id': id,
             'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'order': orderId,
             'type': undefined,
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 
@@ -180,14 +183,11 @@ module.exports = class bitstamp1 extends Exchange {
             const code = codes[i];
             const currency = this.currency (code);
             const currencyId = currency['id'];
-            const total = currencyId + '_balance';
-            const free = currencyId + '_available';
-            const used = currencyId + '_reserved';
             const account = this.account ();
-            account['free'] = this.safeFloat (balance, free, 0.0);
-            account['used'] = this.safeFloat (balance, used, 0.0);
-            account['total'] = this.safeFloat (balance, total, 0.0);
-            result[currency] = account;
+            account['free'] = this.safeFloat (balance, currencyId + '_available');
+            account['used'] = this.safeFloat (balance, currencyId + '_reserved');
+            account['total'] = this.safeFloat (balance, currencyId + '_balance');
+            result[code] = account;
         }
         return this.parseBalance (result);
     }

@@ -107,12 +107,10 @@ module.exports = class poloniex extends Exchange {
                     ],
                 },
             },
-            // Fees are tier-based. More info: https://poloniex.com/fees/
-            // Rates below are highest possible.
             'fees': {
                 'trading': {
-                    'maker': 0.001,
-                    'taker': 0.002,
+                    'maker': 0.15 / 100,
+                    'taker': 0.25 / 100,
                 },
                 'funding': {},
             },
@@ -208,12 +206,12 @@ module.exports = class poloniex extends Exchange {
 
     parseOHLCV (ohlcv, market = undefined, timeframe = '5m', since = undefined, limit = undefined) {
         return [
-            ohlcv['date'] * 1000,
-            ohlcv['open'],
-            ohlcv['high'],
-            ohlcv['low'],
-            ohlcv['close'],
-            ohlcv['quoteVolume'],
+            this.safeTimestamp (ohlcv, 'date'),
+            this.safeFloat (ohlcv, 'open'),
+            this.safeFloat (ohlcv, 'high'),
+            this.safeFloat (ohlcv, 'low'),
+            this.safeFloat (ohlcv, 'close'),
+            this.safeFloat (ohlcv, 'quoteVolume'),
         ];
     }
 
@@ -245,8 +243,8 @@ module.exports = class poloniex extends Exchange {
             const id = keys[i];
             const market = markets[id];
             const [ quoteId, baseId ] = id.split ('_');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const limits = this.extend (this.limits, {
                 'cost': {
@@ -277,17 +275,14 @@ module.exports = class poloniex extends Exchange {
         };
         const response = await this.privatePostReturnCompleteBalances (this.extend (request, params));
         const result = { 'info': response };
-        const currencies = Object.keys (response);
-        for (let i = 0; i < currencies.length; i++) {
-            const currencyId = currencies[i];
-            const balance = response[currencyId];
-            const code = this.commonCurrencyCode (currencyId);
-            const account = {
-                'free': this.safeFloat (balance, 'available'),
-                'used': this.safeFloat (balance, 'onOrders'),
-                'total': 0.0,
-            };
-            account['total'] = this.sum (account['free'], account['used']);
+        const currencyIds = Object.keys (response);
+        for (let i = 0; i < currencyIds.length; i++) {
+            const currencyId = currencyIds[i];
+            const balance = this.safeValue (response, currencyId, {});
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['free'] = this.safeFloat (balance, 'available');
+            account['used'] = this.safeFloat (balance, 'onOrders');
             result[code] = account;
         }
         return this.parseBalance (result);
@@ -339,8 +334,8 @@ module.exports = class poloniex extends Exchange {
                 symbol = this.markets_by_id[marketId]['symbol'];
             } else {
                 const [ quoteId, baseId ] = marketId.split ('_');
-                const base = this.commonCurrencyCode (baseId);
-                const quote = this.commonCurrencyCode (quoteId);
+                const base = this.safeCurrencyCode (baseId);
+                const quote = this.safeCurrencyCode (quoteId);
                 symbol = base + '/' + quote;
             }
             const orderbook = this.parseOrderBook (response[marketId]);
@@ -404,8 +399,8 @@ module.exports = class poloniex extends Exchange {
                 symbol = market['symbol'];
             } else {
                 const [ quoteId, baseId ] = id.split ('_');
-                const base = this.commonCurrencyCode (baseId);
-                const quote = this.commonCurrencyCode (quoteId);
+                const base = this.safeCurrencyCode (baseId);
+                const quote = this.safeCurrencyCode (quoteId);
                 symbol = base + '/' + quote;
                 market = { 'symbol': symbol };
             }
@@ -426,7 +421,7 @@ module.exports = class poloniex extends Exchange {
             // to add support for multiple withdrawal/deposit methods and
             // differentiated fees for each particular method
             const precision = 8; // default precision, todo: fix "magic constants"
-            const code = this.commonCurrencyCode (id);
+            const code = this.safeCurrencyCode (id);
             const active = (currency['delisted'] === 0) && !currency['disabled'];
             result[code] = {
                 'id': id,
@@ -544,14 +539,15 @@ module.exports = class poloniex extends Exchange {
             };
         }
         return {
+            'id': id,
             'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'symbol': symbol,
-            'id': id,
             'order': orderId,
             'type': 'limit',
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
@@ -659,8 +655,8 @@ module.exports = class poloniex extends Exchange {
                         }
                     } else {
                         const [ quoteId, baseId ] = id.split ('_');
-                        const base = this.commonCurrencyCode (baseId);
-                        const quote = this.commonCurrencyCode (quoteId);
+                        const base = this.safeCurrencyCode (baseId);
+                        const quote = this.safeCurrencyCode (quoteId);
                         const symbol = base + '/' + quote;
                         const trades = response[id];
                         for (let j = 0; j < trades.length; j++) {
@@ -1121,7 +1117,7 @@ module.exports = class poloniex extends Exchange {
         const response = await this.privatePostWithdraw (this.extend (request, params));
         return {
             'info': response,
-            'id': response['response'],
+            'id': this.safeString (response, 'withdrawalNumber'),
         };
     }
 
@@ -1266,19 +1262,9 @@ module.exports = class poloniex extends Exchange {
         //         "withdrawalNumber": 11162900
         //     }
         //
-        let timestamp = this.safeInteger (transaction, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp = timestamp * 1000;
-        }
-        let code = undefined;
+        const timestamp = this.safeTimestamp (transaction, 'timestamp');
         const currencyId = this.safeString (transaction, 'currency');
-        currency = this.safeValue (this.currencies_by_id, currencyId);
-        if (currency === undefined) {
-            code = this.commonCurrencyCode (currencyId);
-        }
-        if (currency !== undefined) {
-            code = currency['code'];
-        }
+        const code = this.safeCurrencyCode (currencyId);
         let status = this.safeString (transaction, 'status', 'pending');
         let txid = this.safeString (transaction, 'txid');
         if (status !== undefined) {
@@ -1345,7 +1331,7 @@ module.exports = class poloniex extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body, response) {
+    handleErrors (code, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return;
         }

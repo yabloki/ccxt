@@ -115,8 +115,8 @@ module.exports = class acx extends Exchange {
             }
             let base = baseId.toUpperCase ();
             let quote = quoteId.toUpperCase ();
-            base = this.commonCurrencyCode (base);
-            quote = this.commonCurrencyCode (quote);
+            base = this.safeCurrencyCode (base);
+            quote = this.safeCurrencyCode (quote);
             // todo: find out their undocumented precision and limits
             const precision = {
                 'amount': 8,
@@ -144,14 +144,10 @@ module.exports = class acx extends Exchange {
         for (let i = 0; i < balances.length; i++) {
             const balance = balances[i];
             const currencyId = this.safeString (balance, 'currency');
-            let code = currencyId.toUpperCase ();
-            code = this.commonCurrencyCode (code);
-            const account = {
-                'free': this.safeFloat (balance, 'balance'),
-                'used': this.safeFloat (balance, 'locked'),
-                'total': 0.0,
-            };
-            account['total'] = this.sum (account['free'], account['used']);
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['free'] = this.safeFloat (balance, 'balance');
+            account['used'] = this.safeFloat (balance, 'locked');
             result[code] = account;
         }
         return this.parseBalance (result);
@@ -167,18 +163,12 @@ module.exports = class acx extends Exchange {
             request['limit'] = limit; // default = 300
         }
         const orderbook = await this.publicGetDepth (this.extend (request, params));
-        let timestamp = this.safeInteger (orderbook, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (orderbook, 'timestamp');
         return this.parseOrderBook (orderbook, timestamp);
     }
 
     parseTicker (ticker, market = undefined) {
-        let timestamp = this.safeInteger (ticker, 'at');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (ticker, 'at');
         ticker = ticker['ticker'];
         let symbol = undefined;
         if (market) {
@@ -226,8 +216,8 @@ module.exports = class acx extends Exchange {
                 let quote = id.slice (3, 6);
                 base = base.toUpperCase ();
                 quote = quote.toUpperCase ();
-                base = this.commonCurrencyCode (base);
-                quote = this.commonCurrencyCode (quote);
+                base = this.safeCurrencyCode (base);
+                quote = this.safeCurrencyCode (quote);
                 symbol = base + '/' + quote;
             }
             result[symbol] = this.parseTicker (response[id], market);
@@ -248,17 +238,24 @@ module.exports = class acx extends Exchange {
     parseTrade (trade, market = undefined) {
         const timestamp = this.parse8601 (this.safeString (trade, 'created_at'));
         const id = this.safeString (trade, 'tid');
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         return {
+            'info': trade,
             'id': id,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'type': undefined,
             'side': undefined,
+            'order': undefined,
+            'takerOrMaker': undefined,
             'price': this.safeFloat (trade, 'price'),
             'amount': this.safeFloat (trade, 'volume'),
             'cost': this.safeFloat (trade, 'funds'),
-            'info': trade,
+            'fee': undefined,
         };
     }
 
@@ -295,7 +292,7 @@ module.exports = class acx extends Exchange {
             'limit': limit,
         };
         if (since !== undefined) {
-            request['timestamp'] = since;
+            request['timestamp'] = parseInt (since / 1000);
         }
         const response = await this.publicGetK (this.extend (request, params));
         return this.parseOHLCVs (response, market, timeframe, since, limit);
@@ -453,7 +450,7 @@ module.exports = class acx extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body, response) {
+    handleErrors (code, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return;
         }

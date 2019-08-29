@@ -29,7 +29,7 @@ module.exports = class exx extends Exchange {
                 'www': 'https://www.exx.com/',
                 'doc': 'https://www.exx.com/help/restApi',
                 'fees': 'https://www.exx.com/help/rate',
-                'referral': 'https://www.exx.com/r/fde4260159e53ab8a58cc9186d35501f',
+                'referral': 'https://www.exx.com/r/fde4260159e53ab8a58cc9186d35501f?recommQd=1',
             },
             'api': {
                 'public': {
@@ -99,10 +99,8 @@ module.exports = class exx extends Exchange {
             const id = ids[i];
             const market = response[id];
             const [ baseId, quoteId ] = id.split ('_');
-            const upper = id.toUpperCase ();
-            let [ base, quote ] = upper.split ('_');
-            base = this.commonCurrencyCode (base);
-            quote = this.commonCurrencyCode (quote);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const active = market['isOpen'] === true;
             const precision = {
@@ -209,25 +207,36 @@ module.exports = class exx extends Exchange {
     }
 
     parseTrade (trade, market = undefined) {
-        const timestamp = this.safeInteger (trade, 'date') * 1000;
+        const timestamp = this.safeTimestamp (trade, 'date');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'amount');
-        const symbol = market['symbol'];
-        const cost = this.costToPrecision (symbol, price * amount);
-        const type = this.safeString (trade, 'type');
+        let cost = undefined;
+        if (price !== undefined) {
+            if (amount !== undefined) {
+                cost = price * amount;
+            }
+        }
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
+        const type = 'limit';
+        const side = this.safeString (trade, 'type');
+        const id = this.safeString (trade, 'tid');
         return {
+            'id': id,
+            'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'symbol': symbol,
-            'id': this.safeString (trade, 'tid'),
             'order': undefined,
-            'type': 'limit',
-            'side': type,
+            'type': type,
+            'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
             'fee': undefined,
-            'info': trade,
         };
     }
 
@@ -250,7 +259,7 @@ module.exports = class exx extends Exchange {
         for (let i = 0; i < currencies.length; i++) {
             const currencyId = currencies[i];
             const balance = balances[currencyId];
-            const code = this.commonCurrencyCode (currencyId);
+            const code = this.safeCurrencyCode (currencyId);
             const account = {
                 'free': this.safeFloat (balance, 'balance'),
                 'used': this.safeFloat (balance, 'freeze'),
@@ -387,7 +396,7 @@ module.exports = class exx extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (httpCode, reason, url, method, headers, body, response) {
+    handleErrors (httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return; // fallback to default error handler
         }

@@ -81,17 +81,14 @@ module.exports = class paymium extends Exchange {
         for (let i = 0; i < currencies.length; i++) {
             const code = currencies[i];
             const currencyId = this.currencyId (code);
-            const account = this.account ();
-            const balance = 'balance_' + currencyId;
-            const locked = 'locked_' + currencyId;
-            if (balance in response) {
-                account['free'] = response[balance];
+            const free = 'balance_' + currencyId;
+            if (free in response) {
+                const account = this.account ();
+                const used = 'locked_' + currencyId;
+                account['free'] = this.safeFloat (response, free);
+                account['used'] = this.safeFloat (response, used);
+                result[code] = account;
             }
-            if (locked in response) {
-                account['used'] = response[locked];
-            }
-            account['total'] = this.sum (account['free'], account['used']);
-            result[code] = account;
         }
         return this.parseBalance (result);
     }
@@ -110,10 +107,7 @@ module.exports = class paymium extends Exchange {
             'id': this.marketId (symbol),
         };
         const ticker = await this.publicGetDataIdTicker (this.extend (request, params));
-        let timestamp = this.safeInteger (ticker, 'at');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (ticker, 'at');
         const vwap = this.safeFloat (ticker, 'vwap');
         const baseVolume = this.safeFloat (ticker, 'volume');
         let quoteVolume = undefined;
@@ -146,10 +140,7 @@ module.exports = class paymium extends Exchange {
     }
 
     parseTrade (trade, market) {
-        let timestamp = this.safeInteger (trade, 'created_at_int');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (trade, 'created_at_int');
         const id = this.safeString (trade, 'uuid');
         let symbol = undefined;
         if (market !== undefined) {
@@ -174,9 +165,11 @@ module.exports = class paymium extends Exchange {
             'symbol': symbol,
             'type': undefined,
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 

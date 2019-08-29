@@ -4,10 +4,18 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.base.exchange import Exchange
+
+# -----------------------------------------------------------------------------
+
+try:
+    basestring  # Python 3
+except NameError:
+    basestring = str  # Python 2
 import hashlib
 import math
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
+from ccxt.base.errors import ArgumentsRequired
 from ccxt.base.errors import InvalidOrder
 
 
@@ -25,6 +33,7 @@ class braziliex (Exchange):
                 'fetchOpenOrders': True,
                 'fetchMyTrades': True,
                 'fetchDepositAddress': True,
+                'fetchOrder': True,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/34703593-c4498674-f504-11e7-8d14-ff8e44fb78c1.jpg',
@@ -54,6 +63,7 @@ class braziliex (Exchange):
                         'sell',
                         'buy',
                         'cancel_order',
+                        'order_status',
                     ],
                 },
             },
@@ -157,8 +167,7 @@ class braziliex (Exchange):
             id = ids[i]
             currency = response[id]
             precision = self.safe_integer(currency, 'decimal')
-            uppercase = id.upper()
-            code = self.common_currency_code(uppercase)
+            code = self.safe_currency_code(id)
             active = self.safe_integer(currency, 'active') == 1
             maintenance = self.safe_integer(currency, 'under_maintenance')
             if maintenance != 0:
@@ -239,8 +248,8 @@ class braziliex (Exchange):
             baseId, quoteId = id.split('_')
             uppercaseBaseId = baseId.upper()
             uppercaseQuoteId = quoteId.upper()
-            base = self.common_currency_code(uppercaseBaseId)
-            quote = self.common_currency_code(uppercaseQuoteId)
+            base = self.safe_currency_code(uppercaseBaseId)
+            quote = self.safe_currency_code(uppercaseQuoteId)
             symbol = base + '/' + quote
             baseCurrency = self.safe_value(currencies, baseId, {})
             quoteCurrency = self.safe_value(currencies, quoteId, {})
@@ -352,19 +361,21 @@ class braziliex (Exchange):
         orderId = self.safe_string(trade, 'order_number')
         type = 'limit'
         side = self.safe_string(trade, 'type')
+        id = self.safe_string(trade, '_id')
         return {
+            'id': id,
+            'info': trade,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
             'symbol': symbol,
-            'id': self.safe_string(trade, '_id'),
             'order': orderId,
             'type': type,
             'side': side,
+            'takerOrMaker': None,
             'price': price,
             'amount': amount,
             'cost': cost,
             'fee': None,
-            'info': trade,
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -384,17 +395,26 @@ class braziliex (Exchange):
         for i in range(0, len(currencyIds)):
             currencyId = currencyIds[i]
             balance = balances[currencyId]
-            code = self.common_currency_code(currencyId)
-            account = {
-                'free': self.safe_float(balance, 'available'),
-                'used': 0.0,
-                'total': self.safe_float(balance, 'total'),
-            }
-            account['used'] = account['total'] - account['free']
+            code = self.safe_currency_code(currencyId)
+            account = self.account()
+            account['free'] = self.safe_float(balance, 'available')
+            account['total'] = self.safe_float(balance, 'total')
             result[code] = account
         return self.parse_balance(result)
 
     def parse_order(self, order, market=None):
+        #
+        #     {
+        #         "order_number":"58ee441d05f8233fadabfb07",
+        #         "type":"buy",
+        #         "market":"ltc_btc",
+        #         "price":"0.01000000",
+        #         "amount":"0.00200000",
+        #         "total":"0.00002000",
+        #         "progress":"1.0000",
+        #         "date":"2017-03-12 15:13:33"
+        #     }
+        #
         symbol = None
         if market is None:
             marketId = self.safe_string(order, 'market')
@@ -416,12 +436,13 @@ class braziliex (Exchange):
             info = order['info']
         id = self.safe_string(order, 'order_number')
         fee = self.safe_value(order, 'fee')  # propagated from createOrder
+        status = 'closed' if (filledPercentage == 1.0) else 'open'
         return {
             'id': id,
             'datetime': self.iso8601(timestamp),
             'timestamp': timestamp,
             'lastTradeTimestamp': None,
-            'status': 'open',
+            'status': status,
             'symbol': symbol,
             'type': 'limit',
             'side': order['type'],
@@ -480,6 +501,18 @@ class braziliex (Exchange):
             'market': market['id'],
         }
         return self.privatePostCancelOrder(self.extend(request, params))
+
+    def fetch_order(self, id, symbol=None, params={}):
+        if symbol is None:
+            raise ArgumentsRequired(self.id + ' fetchOrder() requires a symbol argument')
+        self.load_markets()
+        market = self.market(symbol)
+        request = {
+            'order_number': id,
+            'market': market['id'],
+        }
+        response = self.privatePostOrderStatus(self.extend(request, params))
+        return self.parse_order(response, market)
 
     def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         self.load_markets()
@@ -540,6 +573,8 @@ class braziliex (Exchange):
 
     def request(self, path, api='public', method='GET', params={}, headers=None, body=None):
         response = self.fetch2(path, api, method, params, headers, body)
+        if (isinstance(response, basestring)) and len((response) < 1):
+            raise ExchangeError(self.id + ' returned empty response')
         if 'success' in response:
             success = self.safe_integer(response, 'success')
             if success == 0:

@@ -100,9 +100,8 @@ module.exports = class _1btcxe extends Exchange {
             const currency = this.currency (code);
             const currencyId = currency['id'];
             const account = this.account ();
-            account['free'] = this.safeFloat (balance['available'], currencyId, 0.0);
-            account['used'] = this.safeFloat (balance['on_hold'], currencyId, 0.0);
-            account['total'] = this.sum (account['free'], account['used']);
+            account['free'] = this.safeFloat (balance['available'], currencyId);
+            account['used'] = this.safeFloat (balance['on_hold'], currencyId);
             result[code] = account;
         }
         return this.parseBalance (result);
@@ -169,10 +168,7 @@ module.exports = class _1btcxe extends Exchange {
     }
 
     parseTrade (trade, market = undefined) {
-        let timestamp = this.safeInteger (trade, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (trade, 'timestamp');
         const id = this.safeString (trade, 'id');
         let symbol = undefined;
         if (market !== undefined) {
@@ -197,9 +193,11 @@ module.exports = class _1btcxe extends Exchange {
             'order': undefined,
             'type': type,
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 

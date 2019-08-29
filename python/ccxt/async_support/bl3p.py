@@ -82,13 +82,10 @@ class bl3p (Exchange):
             account = self.account()
             account['free'] = self.safe_float(available, 'value')
             account['total'] = self.safe_float(balance, 'value')
-            if account['total']:
-                if account['free']:
-                    account['used'] = account['total'] - account['free']
             result[code] = account
         return self.parse_balance(result)
 
-    def parse_bid_ask(self, bidask, priceKey=0, amountKey=0):
+    def parse_bid_ask(self, bidask, priceKey=0, amountKey=1):
         return [
             bidask[priceKey] / 100000.0,
             bidask[amountKey] / 100000000.0,
@@ -108,9 +105,7 @@ class bl3p (Exchange):
             'market': self.market_id(symbol),
         }
         ticker = await self.publicGetMarketTicker(self.extend(request, params))
-        timestamp = self.safe_integer(ticker, 'timestamp')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp(ticker, 'timestamp')
         last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
@@ -135,18 +130,36 @@ class bl3p (Exchange):
             'info': ticker,
         }
 
-    def parse_trade(self, trade, market):
+    def parse_trade(self, trade, market=None):
         id = self.safe_string(trade, 'trade_id')
+        timestamp = self.safe_integer(trade, 'date')
+        price = self.safe_float(trade, 'price_int')
+        if price is not None:
+            price /= 100000.0
+        amount = self.safe_float(trade, 'amount_int')
+        if amount is not None:
+            amount /= 100000000.0
+        cost = None
+        if price is not None:
+            if amount is not None:
+                cost = amount * price
+        symbol = None
+        if market is not None:
+            symbol = market['symbol']
         return {
             'id': id,
-            'timestamp': trade['date'],
-            'datetime': self.iso8601(trade['date']),
-            'symbol': market['symbol'],
+            'info': trade,
+            'timestamp': timestamp,
+            'datetime': self.iso8601(timestamp),
+            'symbol': symbol,
             'type': None,
             'side': None,
-            'price': trade['price_int'] / 100000.0,
-            'amount': trade['amount_int'] / 100000000.0,
-            'info': trade,
+            'order': None,
+            'takerOrMaker': None,
+            'price': price,
+            'amount': amount,
+            'cost': cost,
+            'fee': None,
         }
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):

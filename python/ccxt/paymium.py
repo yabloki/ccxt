@@ -81,15 +81,13 @@ class paymium (Exchange):
         for i in range(0, len(currencies)):
             code = currencies[i]
             currencyId = self.currencyId(code)
-            account = self.account()
-            balance = 'balance_' + currencyId
-            locked = 'locked_' + currencyId
-            if balance in response:
-                account['free'] = response[balance]
-            if locked in response:
-                account['used'] = response[locked]
-            account['total'] = self.sum(account['free'], account['used'])
-            result[code] = account
+            free = 'balance_' + currencyId
+            if free in response:
+                account = self.account()
+                used = 'locked_' + currencyId
+                account['free'] = self.safe_float(response, free)
+                account['used'] = self.safe_float(response, used)
+                result[code] = account
         return self.parse_balance(result)
 
     def fetch_order_book(self, symbol, limit=None, params={}):
@@ -105,9 +103,7 @@ class paymium (Exchange):
             'id': self.market_id(symbol),
         }
         ticker = self.publicGetDataIdTicker(self.extend(request, params))
-        timestamp = self.safe_integer(ticker, 'at')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp(ticker, 'at')
         vwap = self.safe_float(ticker, 'vwap')
         baseVolume = self.safe_float(ticker, 'volume')
         quoteVolume = None
@@ -138,9 +134,7 @@ class paymium (Exchange):
         }
 
     def parse_trade(self, trade, market):
-        timestamp = self.safe_integer(trade, 'created_at_int')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp(trade, 'created_at_int')
         id = self.safe_string(trade, 'uuid')
         symbol = None
         if market is not None:
@@ -162,9 +156,11 @@ class paymium (Exchange):
             'symbol': symbol,
             'type': None,
             'side': side,
+            'takerOrMaker': None,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': None,
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):

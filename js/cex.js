@@ -351,8 +351,8 @@ module.exports = class cex extends Exchange {
             const baseId = this.safeString (market, 'symbol1');
             const quoteId = this.safeString (market, 'symbol2');
             const id = baseId + '/' + quoteId;
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             result.push ({
                 'id': id,
@@ -395,13 +395,11 @@ module.exports = class cex extends Exchange {
         for (let i = 0; i < currencyIds.length; i++) {
             const currencyId = currencyIds[i];
             const balance = this.safeValue (balances, currencyId, {});
-            const account = {
-                'free': this.safeFloat (balance, 'available', 0.0),
-                'used': this.safeFloat (balance, 'orders', 0.0),
-                'total': 0.0,
-            };
-            account['total'] = this.sum (account['free'], account['used']);
-            const code = this.commonCurrencyCode (currencyId);
+            const account = this.account ();
+            account['free'] = this.safeFloat (balance, 'available');
+            // https://github.com/ccxt/ccxt/issues/5484
+            account['used'] = this.safeFloat (balance, 'orders', 0.0);
+            const code = this.safeCurrencyCode (currencyId);
             result[code] = account;
         }
         return this.parseBalance (result);
@@ -416,7 +414,7 @@ module.exports = class cex extends Exchange {
             request['depth'] = limit;
         }
         const response = await this.publicGetOrderBookPair (this.extend (request, params));
-        const timestamp = response['timestamp'] * 1000;
+        const timestamp = this.safeTimestamp (response, 'timestamp');
         return this.parseOrderBook (response, timestamp);
     }
 
@@ -461,10 +459,7 @@ module.exports = class cex extends Exchange {
     }
 
     parseTicker (ticker, market = undefined) {
-        let timestamp = undefined;
-        if ('timestamp' in ticker) {
-            timestamp = parseInt (ticker['timestamp']) * 1000;
-        }
+        const timestamp = this.safeTimestamp (ticker, 'timestamp');
         const volume = this.safeFloat (ticker, 'volume');
         const high = this.safeFloat (ticker, 'high');
         const low = this.safeFloat (ticker, 'low');
@@ -528,10 +523,7 @@ module.exports = class cex extends Exchange {
     }
 
     parseTrade (trade, market = undefined) {
-        let timestamp = this.safeInteger (trade, 'date');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (trade, 'date');
         const id = this.safeString (trade, 'tid');
         const type = undefined;
         const side = this.safeString (trade, 'type');
@@ -543,17 +535,24 @@ module.exports = class cex extends Exchange {
                 cost = amount * price;
             }
         }
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         return {
             'info': trade,
             'id': id,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'type': type,
             'side': side,
+            'order': undefined,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 
@@ -621,8 +620,8 @@ module.exports = class cex extends Exchange {
         if (market === undefined) {
             const baseId = this.safeString (order, 'symbol1');
             const quoteId = this.safeString (order, 'symbol2');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             symbol = base + '/' + quote;
             if (symbol in this.markets) {
                 market = this.market (symbol);
@@ -630,7 +629,12 @@ module.exports = class cex extends Exchange {
         }
         const status = this.parseOrderStatus (this.safeString (order, 'status'));
         const price = this.safeFloat (order, 'price');
-        const amount = this.safeFloat (order, 'amount');
+        let amount = this.safeFloat (order, 'amount');
+        // sell orders can have a negative amount
+        // https://github.com/ccxt/ccxt/issues/5338
+        if (amount !== undefined) {
+            amount = Math.abs (amount);
+        }
         const remaining = this.safeFloat2 (order, 'pending', 'remains');
         const filled = amount - remaining;
         let fee = undefined;
@@ -779,15 +783,41 @@ module.exports = class cex extends Exchange {
                 //     "balance": "5597.44000000",
                 //     "symbol2": "BCH",
                 //     "fee_amount": "0.01" }
+                // --
+                // trade which should have an amount of exactly 0.002BTC
+                //   {
+                //     "a": "16.70000000",
+                //     "c": "user:up106404164:a:GBP",
+                //     "d": "order:9927386681:a:GBP",
+                //     "cs": "86.90",
+                //     "ds": 0,
+                //     "id": "9927401610",
+                //     "buy": "9927401601",
+                //     "pos": null,
+                //     "pair": null,
+                //     "sell": "9927386681",
+                //     "time": "2019-08-21T15:25:37.777Z",
+                //     "type": "sell",
+                //     "user": "up106404164",
+                //     "order": "9927386681",
+                //     "price": 8365,
+                //     "amount": "16.70000000",
+                //     "office": "UK",
+                //     "symbol": "GBP",
+                //     "balance": "86.90000000",
+                //     "symbol2": "BTC",
+                //     "fee_amount": "0.03"
+                //   }
                 const tradeTime = this.safeString (item, 'time');
                 const tradeTimestamp = this.parse8601 (tradeTime);
                 const tradeAmount = this.safeFloat (item, 'amount');
                 const tradePrice = this.safeFloat (item, 'price');
+                const feeCost = this.safeFloat (item, 'fee_amount');
                 let absTradeAmount = tradeAmount < 0 ? -tradeAmount : tradeAmount;
                 let tradeCost = undefined;
                 if (tradeSide === 'sell') {
                     tradeCost = absTradeAmount;
-                    absTradeAmount = tradeCost / tradePrice;
+                    absTradeAmount = this.sum (feeCost, tradeCost) / tradePrice;
                 } else {
                     tradeCost = absTradeAmount * tradePrice;
                 }
@@ -802,7 +832,7 @@ module.exports = class cex extends Exchange {
                     'cost': tradeCost,
                     'side': tradeSide,
                     'fee': {
-                        'cost': this.safeFloat (item, 'fee_amount'),
+                        'cost': feeCost,
                         'currency': market['quote'],
                     },
                     'info': item,
@@ -867,6 +897,27 @@ module.exports = class cex extends Exchange {
         return this.parseOrder (response['data']);
     }
 
+    async editOrder (id, symbol, type, side, amount = undefined, price = undefined, params = {}) {
+        if (amount === undefined) {
+            throw new ArgumentsRequired (this.id + ' editOrder requires a amount argument');
+        }
+        if (price === undefined) {
+            throw new ArgumentsRequired (this.id + ' editOrder requires a price argument');
+        }
+        await this.loadMarkets ();
+        const market = this.market (symbol);
+        // see: https://cex.io/rest-api#/definitions/CancelReplaceOrderRequest
+        const request = {
+            'pair': market['id'],
+            'type': side,
+            'amount': amount,
+            'price': price,
+            'order_id': id,
+        };
+        const response = await this.privatePostCancelReplaceOrderPair (this.extend (request, params));
+        return this.parseOrder (response, market);
+    }
+
     nonce () {
         return this.milliseconds ();
     }
@@ -897,6 +948,9 @@ module.exports = class cex extends Exchange {
 
     async request (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         const response = await this.fetch2 (path, api, method, params, headers, body);
+        if (Array.isArray (response)) {
+            return response; // public endpoints may return []-arrays
+        }
         if (!response) {
             throw new NullResponse (this.id + ' returned ' + this.json (response));
         } else if (response === true || response === 'true') {

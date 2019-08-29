@@ -273,7 +273,7 @@ Most of exchanges' API endpoints will require an exchange-specific market symbol
 - https://github.com/ccxt/ccxt/wiki/Manual#markets
 - https://github.com/ccxt/ccxt/wiki/Manual#symbols-and-market-ids
 
-**NEVER DO THIS BAD CODE:**
+**NEVER DO THIS:**
 
 ```JavaScript
 async fetchTicker (symbol, params = {}) {
@@ -285,7 +285,7 @@ async fetchTicker (symbol, params = {}) {
 }
 ```
 
-**DO NOT DO THIS, ALSO AN EXAMPLE OF BAD CODE:**
+**DO NOT DO THIS EITHER:**
 
 ```JavaScript
 async fetchTicker (symbol, params = {}) {
@@ -337,7 +337,7 @@ When sending requests to the exchange unified symbols have to be _"converted"_ t
 - https://github.com/ccxt/ccxt/wiki/Manual#markets
 - https://github.com/ccxt/ccxt/wiki/Manual#symbols-and-market-ids
 
-**NEVER DO THIS BAD CODE:**:
+**NEVER DO THIS:**:
 
 ```JavaScript
 parseTrade (trade, market = undefined) {
@@ -350,7 +350,7 @@ parseTrade (trade, market = undefined) {
 }
 ```
 
-**DO NOT DO THIS, ALSO AN EXAMPLE OF BAD CODE:**
+**DO NOT DO THIS EITHER**
 
 ```JavaScript
 parseTrade (trade, market = undefined) {
@@ -379,8 +379,8 @@ parseTrade (trade, market = undefined) {
       } else {
          // try to parse it somehow, if the format is known
          const [ baseId, quoteId ] = marketId.split ('/');
-         const base = this.commonCurrencyCode (baseId); // unified
-         const quote = this.commonCurrencyCode (quoteId);
+         const base = this.safeCurrencyCode (baseId); // unified
+         const quote = this.safeCurrencyCode (quoteId);
          symbol = base + '/' + quote;
       }
    }
@@ -477,6 +477,70 @@ Or:
 ```JavaScript
 if ('foo' in params) {
 }
+```
+
+#### Using Base Class Cryptography Methods For Authentication
+
+Do not reinvent the wheel. Always use base-class methods for cryptography.
+
+The CCXT library supports the following authentication algorithms and cryptography algorithms:
+
+- HMAC
+- JWT (JSON Web Token)
+- RSA
+- ECDSA Elliptic Curve Cryptography
+  - NIST P256
+  - secp256k1
+- OTP 2FA (one-time password 2-factor authentication)
+
+The base `Exchange` class offers several methods that are key to practically all cryptography in this lib. Derived exchange implementations must not use external dependencies for cryptography, everything should be done with base methods only.
+
+- `hash (message, hash = 'md5', digest = 'hex')`
+- `hmac (message, secret, hash = 'sha256', digest = 'hex')`
+- `jwt (message, secret, hash = 'HS256')`
+- `rsa (message, secret, alg = 'RS256')`
+- `ecdsa (request, secret, algorithm = 'p256', hash = undefined)`
+- `totp (secret)`
+- `stringToBase64()`, `base64ToBinary()`, `binaryToBase64()`...
+
+The `hash()` method supports the following `hash` algorithms:
+
+- `'md5'`
+- `'sha1'`
+- `'sha3'`
+- `'sha256'`
+- `'sha384'`
+- `'sha512'`
+- `'keccak'`
+
+The `digest` encoding argument accepts the following values:
+
+- `'hex'`
+- `'binary'`
+
+The `hmac()` method also supports `'base64'` for the `digest` argument. This is for `hmac()` only, other implementations should use `'binary'` with `binaryToBase64()`.
+
+#### Timestamps
+
+**All timestamps throughout all unified structures within this library are integer timestamp _in milliseconds_!**
+
+In order to convert to milliseconds timestamps, CCXT implementes the following methods:
+
+```JavaScript
+const data = {
+   'unixTimestampInSeconds': 1565242530,
+   'unixTimestampInMilliseconds': 1565242530165,
+   'stringInSeconds': '1565242530',
+};
+
+// convert to integer if the underlying value is already in milliseconds
+const timestamp = this.safeInteger (data, 'unixTimestampInMilliseconds'); // === 1565242530165
+
+// convert to integer and multiply by a thousand if the value is a UNIX timestamp in seconds
+const timestamp = this.safeTimestamp (data, 'unixTimestampInSeconds'); // === 1565242530000
+
+// convert to integer and multiply by a thousand if the value is in seconds
+const timestamp = this.safeTimestamp (data, 'stringInSeconds'); // === 1565242530000
 ```
 
 #### Working With Array Lengths

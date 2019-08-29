@@ -81,7 +81,7 @@ class bitstamp1 (Exchange):
             raise ExchangeError(self.id + ' ' + self.version + " fetchOrderBook doesn't support " + symbol + ', use it for BTC/USD only')
         await self.load_markets()
         orderbook = await self.publicGetOrderBook(params)
-        timestamp = int(orderbook['timestamp']) * 1000
+        timestamp = self.safe_timestamp(orderbook, 'timestamp')
         return self.parse_order_book(orderbook, timestamp)
 
     async def fetch_ticker(self, symbol, params={}):
@@ -89,7 +89,7 @@ class bitstamp1 (Exchange):
             raise ExchangeError(self.id + ' ' + self.version + " fetchTicker doesn't support " + symbol + ', use it for BTC/USD only')
         await self.load_markets()
         ticker = await self.publicGetTicker(params)
-        timestamp = int(ticker['timestamp']) * 1000
+        timestamp = self.safe_timestamp(ticker, 'timestamp')
         vwap = self.safe_float(ticker, 'vwap')
         baseVolume = self.safe_float(ticker, 'volume')
         quoteVolume = None
@@ -120,9 +120,7 @@ class bitstamp1 (Exchange):
         }
 
     def parse_trade(self, trade, market=None):
-        timestamp = self.safe_integer_2(trade, 'date', 'datetime')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp_2(trade, 'date', 'datetime')
         side = 'buy' if (trade['type'] == 0) else 'sell'
         orderId = self.safe_string(trade, 'order_id')
         if 'currency_pair' in trade:
@@ -135,18 +133,23 @@ class bitstamp1 (Exchange):
         if price is not None:
             if amount is not None:
                 cost = price * amount
+        symbol = None
+        if market is not None:
+            symbol = market['symbol']
         return {
             'id': id,
             'info': trade,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'order': orderId,
             'type': None,
             'side': side,
+            'takerOrMaker': None,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': None,
         }
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -168,14 +171,11 @@ class bitstamp1 (Exchange):
             code = codes[i]
             currency = self.currency(code)
             currencyId = currency['id']
-            total = currencyId + '_balance'
-            free = currencyId + '_available'
-            used = currencyId + '_reserved'
             account = self.account()
-            account['free'] = self.safe_float(balance, free, 0.0)
-            account['used'] = self.safe_float(balance, used, 0.0)
-            account['total'] = self.safe_float(balance, total, 0.0)
-            result[currency] = account
+            account['free'] = self.safe_float(balance, currencyId + '_available')
+            account['used'] = self.safe_float(balance, currencyId + '_reserved')
+            account['total'] = self.safe_float(balance, currencyId + '_balance')
+            result[code] = account
         return self.parse_balance(result)
 
     async def create_order(self, symbol, type, side, amount, price=None, params={}):

@@ -42,7 +42,7 @@ module.exports = class lbank extends Exchange {
                 'www': 'https://www.lbank.info',
                 'doc': 'https://github.com/LBank-exchange/lbank-official-api-docs',
                 'fees': 'https://lbankinfo.zendesk.com/hc/zh-cn/articles/115002295114--%E8%B4%B9%E7%8E%87%E8%AF%B4%E6%98%8E',
-                'referral': 'https://www.lbex.io/sign-up.html?icode=7QCY&lang=en-US',
+                'referral': 'https://www.lbex.io/invite?icode=7QCY',
             },
             'api': {
                 'public': {
@@ -104,6 +104,9 @@ module.exports = class lbank extends Exchange {
             'commonCurrencies': {
                 'VET_ERC20': 'VEN',
             },
+            'options': {
+                'cacheSecretAsPem': true,
+            },
         });
     }
 
@@ -125,8 +128,8 @@ module.exports = class lbank extends Exchange {
                 baseId = parts[0];
                 quoteId = parts[1];
             }
-            const base = this.commonCurrencyCode (baseId.toUpperCase ());
-            const quote = this.commonCurrencyCode (quoteId.toUpperCase ());
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const precision = {
                 'amount': this.safeInteger (market, 'quantityAccuracy'),
@@ -181,8 +184,8 @@ module.exports = class lbank extends Exchange {
                     baseId = parts[0];
                     quoteId = parts[1];
                 }
-                const base = this.commonCurrencyCode (baseId.toUpperCase ());
-                const quote = this.commonCurrencyCode (quoteId.toUpperCase ());
+                const base = this.safeCurrencyCode (baseId);
+                const quote = this.safeCurrencyCode (quoteId);
                 symbol = base + '/' + quote;
             }
         }
@@ -191,10 +194,19 @@ module.exports = class lbank extends Exchange {
         ticker = info['ticker'];
         const last = this.safeFloat (ticker, 'latest');
         const percentage = this.safeFloat (ticker, 'change');
-        const relativeChange = percentage / 100;
-        const open = last / this.sum (1, relativeChange);
-        const change = last - open;
-        const average = this.sum (last, open) / 2;
+        let open = undefined;
+        if (percentage !== undefined) {
+            const relativeChange = this.sum (1, percentage / 100);
+            if (relativeChange > 0) {
+                open = last / this.sum (1, relativeChange);
+            }
+        }
+        let change = undefined;
+        let average = undefined;
+        if (last !== undefined && open !== undefined) {
+            change = last - open;
+            average = this.sum (last, open) / 2;
+        }
         if (market !== undefined) {
             symbol = market['symbol'];
         }
@@ -272,26 +284,26 @@ module.exports = class lbank extends Exchange {
         let cost = undefined;
         if (price !== undefined) {
             if (amount !== undefined) {
-                cost = this.costToPrecision (symbol, price * amount);
-                cost = parseFloat (cost);
+                cost = parseFloat (this.costToPrecision (symbol, price * amount));
             }
         }
         const id = this.safeString (trade, 'tid');
         const type = undefined;
         const side = this.safeString (trade, 'type');
         return {
+            'id': id,
+            'info': this.safeValue (trade, 'info', trade),
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'symbol': symbol,
-            'id': id,
             'order': undefined,
             'type': type,
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
             'fee': undefined,
-            'info': this.safeValue (trade, 'info', trade),
         };
     }
 
@@ -345,19 +357,41 @@ module.exports = class lbank extends Exchange {
     async fetchBalance (params = {}) {
         await this.loadMarkets ();
         const response = await this.privatePostUserInfo (params);
+        //
+        //     {
+        //         "result":"true",
+        //         "info":{
+        //             "freeze":{
+        //                 "iog":"0.00000000",
+        //                 "ssc":"0.00000000",
+        //                 "eon":"0.00000000",
+        //             },
+        //             "asset":{
+        //                 "iog":"0.00000000",
+        //                 "ssc":"0.00000000",
+        //                 "eon":"0.00000000",
+        //             },
+        //             "free":{
+        //                 "iog":"0.00000000",
+        //                 "ssc":"0.00000000",
+        //                 "eon":"0.00000000",
+        //             },
+        //         }
+        //     }
+        //
         const result = { 'info': response };
-        const ids = Object.keys (this.extend (response['info']['free'], response['info']['freeze']));
-        for (let i = 0; i < ids.length; i++) {
-            const id = ids[i];
-            const code = this.commonCurrencyCode (id);
-            const free = this.safeFloat (response['info']['free'], id, 0.0);
-            const used = this.safeFloat (response['info']['freeze'], id, 0.0);
-            const account = {
-                'free': free,
-                'used': used,
-                'total': 0.0,
-            };
-            account['total'] = this.sum (account['free'], account['used']);
+        const info = this.safeValue (response, 'info', {});
+        const free = this.safeValue (info, 'free', {});
+        const freeze = this.safeValue (info, 'freeze', {});
+        const asset = this.safeValue (info, 'asset', {});
+        const currencyIds = Object.keys (free);
+        for (let i = 0; i < currencyIds.length; i++) {
+            const currencyId = currencyIds[i];
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['free'] = this.safeFloat (free, currencyId);
+            account['used'] = this.safeFloat (freeze, currencyId);
+            account['total'] = this.safeFloat (asset, currencyId);
             result[code] = account;
         }
         return this.parseBalance (result);
@@ -521,6 +555,20 @@ module.exports = class lbank extends Exchange {
         };
     }
 
+    convertSecretToPem (secret) {
+        const lineLength = 64;
+        const secretLength = secret.length - 0;
+        let numLines = parseInt (secretLength / lineLength);
+        numLines = this.sum (numLines, 1);
+        let pem = "-----BEGIN PRIVATE KEY-----\n"; // eslint-disable-line
+        for (let i = 0; i < numLines; i++) {
+            const start = i * lineLength;
+            const end = this.sum (start, lineLength);
+            pem += this.secret.slice (start, end) + "\n"; // eslint-disable-line
+        }
+        return pem + '-----END PRIVATE KEY-----';
+    }
+
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         const query = this.omit (params, this.extractParams (path));
         let url = this.urls['api'] + '/' + this.version + '/' + this.implodeParams (path, params);
@@ -535,8 +583,21 @@ module.exports = class lbank extends Exchange {
             const query = this.keysort (this.extend ({
                 'api_key': this.apiKey,
             }, params));
-            const queryString = this.rawencode (query) + '&secret_key=' + this.secret;
-            query['sign'] = this.hash (this.encode (queryString)).toUpperCase ();
+            const queryString = this.rawencode (query);
+            const message = this.hash (this.encode (queryString)).toUpperCase ();
+            const cacheSecretAsPem = this.safeValue (this.options, 'cacheSecretAsPem', true);
+            let pem = undefined;
+            if (cacheSecretAsPem) {
+                pem = this.safeValue (this.options, 'pem');
+                if (pem === undefined) {
+                    pem = this.convertSecretToPem (this.secret);
+                    this.options['pem'] = pem;
+                }
+            } else {
+                pem = this.convertSecretToPem (this.secret);
+            }
+            const sign = this.binaryToBase64 (this.rsa (message, this.encode (pem), 'RS256'));
+            query['sign'] = sign;
             body = this.urlencode (query);
             headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
         }

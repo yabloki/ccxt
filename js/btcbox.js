@@ -78,13 +78,14 @@ module.exports = class btcbox extends Exchange {
             const code = codes[i];
             const currency = this.currency (code);
             const currencyId = currency['id'];
-            const account = this.account ();
             const free = currencyId + '_balance';
-            const used = currencyId + '_lock';
-            account['free'] = this.safeFloat (response, free);
-            account['used'] = this.safeFloat (response, used);
-            account['total'] = this.sum (account['free'], account['used']);
-            result[currency] = account;
+            if (free in response) {
+                const account = this.account ();
+                const used = currencyId + '_lock';
+                account['free'] = this.safeFloat (response, free);
+                account['used'] = this.safeFloat (response, used);
+                result[code] = account;
+            }
         }
         return this.parseBalance (result);
     }
@@ -145,10 +146,7 @@ module.exports = class btcbox extends Exchange {
     }
 
     parseTrade (trade, market = undefined) {
-        let timestamp = this.safeInteger (trade, 'date');
-        if (timestamp !== undefined) {
-            timestamp *= 1000; // GMT time
-        }
+        const timestamp = this.safeTimestamp (trade, 'date');
         let symbol = undefined;
         if (market !== undefined) {
             symbol = market['symbol'];
@@ -173,9 +171,11 @@ module.exports = class btcbox extends Exchange {
             'symbol': symbol,
             'type': type,
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 
@@ -373,7 +373,7 @@ module.exports = class btcbox extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (httpCode, reason, url, method, headers, body, response) {
+    handleErrors (httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return; // resort to defaultErrorHandler
         }
@@ -392,5 +392,20 @@ module.exports = class btcbox extends Exchange {
             throw new exceptions[errorCode] (feedback);
         }
         throw new ExchangeError (feedback); // unknown message
+    }
+
+    async request (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
+        let response = await this.fetch2 (path, api, method, params, headers, body);
+        // sometimes the exchange returns whitespace prepended to json
+        // the code below removes excessive spaces
+        if (typeof response === 'string') {
+            response = response.split (' ');
+            response = response.join ('');
+            if (!this.isJsonEncodedObject (response)) {
+                throw new ExchangeError (this.id + ' ' + response);
+            }
+            response = JSON.parse (response);
+        }
+        return response;
     }
 };

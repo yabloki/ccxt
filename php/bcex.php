@@ -35,7 +35,13 @@ class bcex extends Exchange {
                 'www' => 'https://www.bcex.top',
                 'doc' => 'https://github.com/BCEX-TECHNOLOGY-LIMITED/API_Docs/wiki/Interface',
                 'fees' => 'https://bcex.udesk.cn/hc/articles/57085',
-                'referral' => 'https://www.bcex.top/user/reg/type/2/pid/758978',
+                'referral' => 'https://www.bcex.top/register?invite_code=758978&lang=en',
+            ),
+            'status' => array (
+                'status' => 'error',
+                'updated' => null,
+                'eta' => null,
+                'url' => null,
             ),
             'api' => array (
                 'public' => array (
@@ -299,8 +305,8 @@ class bcex extends Exchange {
                 $quoteId = $this->safe_string($market, 'coin_to');
                 $base = strtoupper($baseId);
                 $quote = strtoupper($quoteId);
-                $base = $this->common_currency_code($base);
-                $quote = $this->common_currency_code($quote);
+                $base = $this->safe_currency_code($base);
+                $quote = $this->safe_currency_code($quote);
                 $id = $baseId . '2' . $quoteId;
                 $symbol = $base . '/' . $quote;
                 $active = true;
@@ -345,10 +351,7 @@ class bcex extends Exchange {
         if ($market !== null) {
             $symbol = $market['symbol'];
         }
-        $timestamp = $this->safe_integer_2($trade, 'date', 'created');
-        if ($timestamp !== null) {
-            $timestamp = $timestamp * 1000;
-        }
+        $timestamp = $this->safe_timestamp_2($trade, 'date', 'created');
         $id = $this->safe_string($trade, 'tid');
         $orderId = $this->safe_string($trade, 'order_id');
         $amount = $this->safe_float_2($trade, 'number', 'amount');
@@ -404,12 +407,7 @@ class bcex extends Exchange {
             $parts = explode('_', $key);
             $currencyId = $parts[0];
             $lockOrOver = $parts[1];
-            $code = strtoupper($currencyId);
-            if (is_array($this->currencies_by_id) && array_key_exists($currencyId, $this->currencies_by_id)) {
-                $code = $this->currencies_by_id[$currencyId]['code'];
-            } else {
-                $code = $this->common_currency_code($code);
-            }
+            $code = $this->safe_currency_code($currencyId);
             if (!(is_array($result) && array_key_exists($code, $result))) {
                 $result[$code] = $this->account ();
             }
@@ -470,10 +468,7 @@ class bcex extends Exchange {
         );
         $response = $this->publicPostApiOrderDepth (array_merge ($request, $params));
         $data = $this->safe_value($response, 'data');
-        $timestamp = $this->safe_integer($data, 'date');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($data, 'date');
         return $this->parse_order_book($data, $timestamp);
     }
 
@@ -508,10 +503,7 @@ class bcex extends Exchange {
         );
         $response = $this->privatePostApiOrderOrderInfo (array_merge ($request, $params));
         $order = $this->safe_value($response, 'data');
-        $timestamp = $this->safe_integer($order, 'created');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($order, 'created');
         $status = $this->parse_order_status($this->safe_string($order, 'status'));
         $side = $this->safe_string($order, 'flag');
         if ($side === 'sale') {
@@ -540,10 +532,7 @@ class bcex extends Exchange {
 
     public function parse_order ($order, $market = null) {
         $id = $this->safe_string($order, 'id');
-        $timestamp = $this->safe_integer($order, 'datetime');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($order, 'datetime');
         $symbol = null;
         if ($market !== null) {
             $symbol = $market['symbol'];
@@ -667,7 +656,7 @@ class bcex extends Exchange {
         return array( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response, $requestHeaders, $requestBody) {
         if ($response === null) {
             return; // fallback to default error handler
         }

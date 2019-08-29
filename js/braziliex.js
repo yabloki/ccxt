@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, InvalidOrder, AuthenticationError } = require ('./base/errors');
+const { ExchangeError, InvalidOrder, AuthenticationError, ArgumentsRequired } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -20,6 +20,7 @@ module.exports = class braziliex extends Exchange {
                 'fetchOpenOrders': true,
                 'fetchMyTrades': true,
                 'fetchDepositAddress': true,
+                'fetchOrder': true,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/34703593-c4498674-f504-11e7-8d14-ff8e44fb78c1.jpg',
@@ -49,6 +50,7 @@ module.exports = class braziliex extends Exchange {
                         'sell',
                         'buy',
                         'cancel_order',
+                        'order_status',
                     ],
                 },
             },
@@ -155,8 +157,7 @@ module.exports = class braziliex extends Exchange {
             const id = ids[i];
             const currency = response[id];
             const precision = this.safeInteger (currency, 'decimal');
-            const uppercase = id.toUpperCase ();
-            const code = this.commonCurrencyCode (uppercase);
+            const code = this.safeCurrencyCode (id);
             let active = this.safeInteger (currency, 'active') === 1;
             const maintenance = this.safeInteger (currency, 'under_maintenance');
             if (maintenance !== 0) {
@@ -241,8 +242,8 @@ module.exports = class braziliex extends Exchange {
             const [ baseId, quoteId ] = id.split ('_');
             const uppercaseBaseId = baseId.toUpperCase ();
             const uppercaseQuoteId = quoteId.toUpperCase ();
-            const base = this.commonCurrencyCode (uppercaseBaseId);
-            const quote = this.commonCurrencyCode (uppercaseQuoteId);
+            const base = this.safeCurrencyCode (uppercaseBaseId);
+            const quote = this.safeCurrencyCode (uppercaseQuoteId);
             const symbol = base + '/' + quote;
             const baseCurrency = this.safeValue (currencies, baseId, {});
             const quoteCurrency = this.safeValue (currencies, quoteId, {});
@@ -364,19 +365,21 @@ module.exports = class braziliex extends Exchange {
         const orderId = this.safeString (trade, 'order_number');
         const type = 'limit';
         const side = this.safeString (trade, 'type');
+        const id = this.safeString (trade, '_id');
         return {
+            'id': id,
+            'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'symbol': symbol,
-            'id': this.safeString (trade, '_id'),
             'order': orderId,
             'type': type,
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
             'fee': undefined,
-            'info': trade,
         };
     }
 
@@ -398,19 +401,28 @@ module.exports = class braziliex extends Exchange {
         for (let i = 0; i < currencyIds.length; i++) {
             const currencyId = currencyIds[i];
             const balance = balances[currencyId];
-            const code = this.commonCurrencyCode (currencyId);
-            const account = {
-                'free': this.safeFloat (balance, 'available'),
-                'used': 0.0,
-                'total': this.safeFloat (balance, 'total'),
-            };
-            account['used'] = account['total'] - account['free'];
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['free'] = this.safeFloat (balance, 'available');
+            account['total'] = this.safeFloat (balance, 'total');
             result[code] = account;
         }
         return this.parseBalance (result);
     }
 
     parseOrder (order, market = undefined) {
+        //
+        //     {
+        //         "order_number":"58ee441d05f8233fadabfb07",
+        //         "type":"buy",
+        //         "market":"ltc_btc",
+        //         "price":"0.01000000",
+        //         "amount":"0.00200000",
+        //         "total":"0.00002000",
+        //         "progress":"1.0000",
+        //         "date":"2017-03-12 15:13:33"
+        //     }
+        //
         let symbol = undefined;
         if (market === undefined) {
             const marketId = this.safeString (order, 'market');
@@ -437,12 +449,13 @@ module.exports = class braziliex extends Exchange {
         }
         const id = this.safeString (order, 'order_number');
         const fee = this.safeValue (order, 'fee'); // propagated from createOrder
+        const status = (filledPercentage === 1.0) ? 'closed' : 'open';
         return {
             'id': id,
             'datetime': this.iso8601 (timestamp),
             'timestamp': timestamp,
             'lastTradeTimestamp': undefined,
-            'status': 'open',
+            'status': status,
             'symbol': symbol,
             'type': 'limit',
             'side': order['type'],
@@ -504,6 +517,20 @@ module.exports = class braziliex extends Exchange {
             'market': market['id'],
         };
         return await this.privatePostCancelOrder (this.extend (request, params));
+    }
+
+    async fetchOrder (id, symbol = undefined, params = {}) {
+        if (symbol === undefined) {
+            throw new ArgumentsRequired (this.id + ' fetchOrder() requires a symbol argument');
+        }
+        await this.loadMarkets ();
+        const market = this.market (symbol);
+        const request = {
+            'order_number': id,
+            'market': market['id'],
+        };
+        const response = await this.privatePostOrderStatus (this.extend (request, params));
+        return this.parseOrder (response, market);
     }
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
@@ -571,6 +598,9 @@ module.exports = class braziliex extends Exchange {
 
     async request (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         const response = await this.fetch2 (path, api, method, params, headers, body);
+        if ((typeof response === 'string') && (response.length < 1)) {
+            throw new ExchangeError (this.id + ' returned empty response');
+        }
         if ('success' in response) {
             const success = this.safeInteger (response, 'success');
             if (success === 0) {

@@ -113,8 +113,8 @@ module.exports = class btcalpha extends Exchange {
             const id = this.safeString (market, 'name');
             const baseId = this.safeString (market, 'currency1');
             const quoteId = this.safeString (market, 'currency2');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const precision = {
                 'amount': 8,
@@ -168,10 +168,7 @@ module.exports = class btcalpha extends Exchange {
         if (market !== undefined) {
             symbol = market['symbol'];
         }
-        let timestamp = this.safeInteger (trade, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (trade, 'timestamp');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'amount');
         let cost = undefined;
@@ -184,18 +181,19 @@ module.exports = class btcalpha extends Exchange {
         const side = this.safeString2 (trade, 'my_side', 'side');
         const orderId = this.safeString (trade, 'o_id');
         return {
+            'id': id,
+            'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'symbol': symbol,
-            'id': id,
             'order': orderId,
             'type': 'limit',
             'side': side,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
             'fee': undefined,
-            'info': trade,
         };
     }
 
@@ -216,12 +214,12 @@ module.exports = class btcalpha extends Exchange {
 
     parseOHLCV (ohlcv, market = undefined, timeframe = '5m', since = undefined, limit = undefined) {
         return [
-            ohlcv['time'] * 1000,
-            ohlcv['open'],
-            ohlcv['high'],
-            ohlcv['low'],
-            ohlcv['close'],
-            ohlcv['volume'],
+            this.safeTimestamp (ohlcv, 'time'),
+            this.safeFloat (ohlcv, 'open'),
+            this.safeFloat (ohlcv, 'high'),
+            this.safeFloat (ohlcv, 'low'),
+            this.safeFloat (ohlcv, 'close'),
+            this.safeFloat (ohlcv, 'volume'),
         ];
     }
 
@@ -249,20 +247,11 @@ module.exports = class btcalpha extends Exchange {
         for (let i = 0; i < response.length; i++) {
             const balance = response[i];
             const currencyId = this.safeString (balance, 'currency');
-            const code = this.commonCurrencyCode (currencyId);
-            const used = this.safeFloat (balance, 'reserve');
-            const total = this.safeFloat (balance, 'balance');
-            let free = undefined;
-            if (used !== undefined) {
-                if (total !== undefined) {
-                    free = total - used;
-                }
-            }
-            result[code] = {
-                'free': free,
-                'used': used,
-                'total': total,
-            };
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['used'] = this.safeFloat (balance, 'reserve');
+            account['total'] = this.safeFloat (balance, 'balance');
+            result[code] = account;
         }
         return this.parseBalance (result);
     }
@@ -284,10 +273,7 @@ module.exports = class btcalpha extends Exchange {
         if (market !== undefined) {
             symbol = market['symbol'];
         }
-        let timestamp = this.safeInteger (order, 'date');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (order, 'date');
         const price = this.safeFloat (order, 'price');
         const amount = this.safeFloat (order, 'amount');
         const status = this.parseOrderStatus (this.safeString (order, 'status'));
@@ -423,7 +409,7 @@ module.exports = class btcalpha extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body, response) {
+    handleErrors (code, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return; // fallback to default error handler
         }

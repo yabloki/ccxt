@@ -27,6 +27,7 @@ module.exports = class mercado extends Exchange {
                 'fetchTickers': false,
             },
             'timeframes': {
+                '1m': '1m',
                 '5m': '5m',
                 '15m': '15m',
                 '30m': '30m',
@@ -118,10 +119,7 @@ module.exports = class mercado extends Exchange {
         };
         const response = await this.publicGetCoinTicker (this.extend (request, params));
         const ticker = this.safeValue (response, 'ticker', {});
-        let timestamp = this.safeInteger (ticker, 'date');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (ticker, 'date');
         const last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
@@ -147,19 +145,37 @@ module.exports = class mercado extends Exchange {
         };
     }
 
-    parseTrade (trade, market) {
-        const timestamp = trade['date'] * 1000;
+    parseTrade (trade, market = undefined) {
+        const timestamp = this.safeTimestamp (trade, 'date');
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
+        const id = this.safeString (trade, 'tid');
+        const type = undefined;
+        const side = this.safeString (trade, 'type');
+        const price = this.safeFloat (trade, 'price');
+        const amount = this.safeFloat (trade, 'amount');
+        let cost = undefined;
+        if (price !== undefined) {
+            if (amount !== undefined) {
+                cost = price * amount;
+            }
+        }
         return {
+            'id': id,
             'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'symbol': market['symbol'],
-            'id': trade['tid'].toString (),
+            'symbol': symbol,
             'order': undefined,
-            'type': undefined,
-            'side': trade['type'],
-            'price': trade['price'],
-            'amount': trade['amount'],
+            'type': type,
+            'side': side,
+            'takerOrMaker': undefined,
+            'price': price,
+            'amount': amount,
+            'cost': cost,
+            'fee': undefined,
         };
     }
 
@@ -185,20 +201,20 @@ module.exports = class mercado extends Exchange {
     async fetchBalance (params = {}) {
         await this.loadMarkets ();
         const response = await this.privatePostGetAccountInfo (params);
-        const balances = this.safeValue (response['response_data'], 'balance');
+        const data = this.safeValue (response, 'response_data', {});
+        const balances = this.safeValue (data, 'balance', {});
         const result = { 'info': response };
-        const currencies = Object.keys (this.currencies);
-        for (let i = 0; i < currencies.length; i++) {
-            const code = currencies[i];
-            const currencyId = this.currencyId (code);
-            const lowercase = currencyId.toLowerCase ();
-            const account = this.account ();
-            if (lowercase in balances) {
-                account['free'] = parseFloat (balances[lowercase]['available']);
-                account['total'] = parseFloat (balances[lowercase]['total']);
-                account['used'] = account['total'] - account['free'];
+        const currencyIds = Object.keys (balances);
+        for (let i = 0; i < currencyIds.length; i++) {
+            const currencyId = currencyIds[i];
+            const code = this.safeCurrencyCode (currencyId);
+            if (currencyId in balances) {
+                const balance = this.safeValue (balances, currencyId, {});
+                const account = this.account ();
+                account['free'] = this.safeFloat (balance, 'available');
+                account['total'] = this.safeFloat (balance, 'total');
+                result[code] = account;
             }
-            result[code] = account;
         }
         return this.parseBalance (result);
     }
@@ -320,10 +336,7 @@ module.exports = class mercado extends Exchange {
         if (market !== undefined) {
             symbol = market['symbol'];
         }
-        let timestamp = this.safeInteger (order, 'created_timestamp');
-        if (timestamp !== undefined) {
-            timestamp = timestamp * 1000;
-        }
+        const timestamp = this.safeTimestamp (order, 'created_timestamp');
         const fee = {
             'cost': this.safeFloat (order, 'fee'),
             'currency': market['quote'],
@@ -335,10 +348,7 @@ module.exports = class mercado extends Exchange {
         const filled = this.safeFloat (order, 'executed_quantity');
         const remaining = amount - filled;
         const cost = filled * average;
-        let lastTradeTimestamp = this.safeInteger (order, 'updated_timestamp');
-        if (lastTradeTimestamp !== undefined) {
-            lastTradeTimestamp = lastTradeTimestamp * 1000;
-        }
+        const lastTradeTimestamp = this.safeTimestamp (order, 'updated_timestamp');
         return {
             'info': order,
             'id': id,
@@ -413,12 +423,8 @@ module.exports = class mercado extends Exchange {
     }
 
     parseOHLCV (ohlcv, market = undefined, timeframe = '1m', since = undefined, limit = undefined) {
-        let timestamp = this.safeInteger (ohlcv, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp = timestamp * 1000;
-        }
         return [
-            timestamp,
+            this.safeTimestamp (ohlcv, 'timestamp'),
             this.safeFloat (ohlcv, 'open'),
             this.safeFloat (ohlcv, 'high'),
             this.safeFloat (ohlcv, 'low'),
@@ -445,7 +451,8 @@ module.exports = class mercado extends Exchange {
             request['from'] = request['to'] - (limit * this.parseTimeframe (timeframe));
         }
         const response = await this.v4PublicGetCoinCandle (this.extend (request, params));
-        return this.parseOHLCVs (response['candles'], market, timeframe, since, limit);
+        const candles = this.safeValue (response, 'candles', []);
+        return this.parseOHLCVs (candles, market, timeframe, since, limit);
     }
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
@@ -455,7 +462,7 @@ module.exports = class mercado extends Exchange {
         await this.loadMarkets ();
         const market = this.market (symbol);
         const request = {
-            'coin_pair': market['base'],
+            'coin_pair': market['id'],
         };
         const response = await this.privatePostListOrders (this.extend (request, params));
         const responseData = this.safeValue (response, 'response_data', {});

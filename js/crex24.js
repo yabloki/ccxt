@@ -167,12 +167,15 @@ module.exports = class crex24 extends Exchange {
             const id = this.safeString (market, 'symbol');
             const baseId = this.safeString (market, 'baseCurrency');
             const quoteId = this.safeString (market, 'quoteCurrency');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
+            const tickSize = this.safeValue (market, 'tickSize');
+            const minPrice = this.safeValue (market, 'minPrice');
+            const minAmount = this.safeFloat (market, 'minVolume');
             const precision = {
-                'amount': this.precisionFromString (this.truncate_to_string (market['tickSize'], 8)),
-                'price': this.precisionFromString (this.truncate_to_string (market['minPrice'], 8)),
+                'amount': this.precisionFromString (this.numberToString (minAmount)),
+                'price': this.precisionFromString (this.numberToString (tickSize)),
             };
             const active = (market['state'] === 'active');
             result.push ({
@@ -187,11 +190,11 @@ module.exports = class crex24 extends Exchange {
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': this.safeFloat (market, 'minVolume'),
+                        'min': minAmount,
                         'max': undefined,
                     },
                     'price': {
-                        'min': Math.pow (10, -precision['price']),
+                        'min': minPrice,
                         'max': undefined,
                     },
                     'cost': {
@@ -236,7 +239,7 @@ module.exports = class crex24 extends Exchange {
         for (let i = 0; i < response.length; i++) {
             const currency = response[i];
             const id = this.safeString (currency, 'symbol');
-            const code = this.commonCurrencyCode (id);
+            const code = this.safeCurrencyCode (id);
             const precision = this.safeInteger (currency, 'withdrawalPrecision');
             const address = this.safeValue (currency, 'BaseAddress');
             const active = (currency['depositsAllowed'] && currency['withdrawalsAllowed'] && !currency['isDelisted']);
@@ -301,20 +304,11 @@ module.exports = class crex24 extends Exchange {
         for (let i = 0; i < response.length; i++) {
             const balance = response[i];
             const currencyId = this.safeString (balance, 'currency');
-            let code = currencyId;
-            if (currencyId in this.currencies_by_id) {
-                code = this.currencies_by_id[currencyId]['code'];
-            } else {
-                code = this.commonCurrencyCode (code);
-            }
-            const free = this.safeFloat (balance, 'available');
-            const used = this.safeFloat (balance, 'reserved');
-            const total = this.sum (free, used);
-            result[code] = {
-                'free': free,
-                'used': used,
-                'total': total,
-            };
+            const code = this.safeCurrencyCode (currencyId);
+            const account = this.account ();
+            account['free'] = this.safeFloat (balance, 'available');
+            account['used'] = this.safeFloat (balance, 'reserved');
+            result[code] = account;
         }
         return this.parseBalance (result);
     }
@@ -373,8 +367,8 @@ module.exports = class crex24 extends Exchange {
             symbol = market['symbol'];
         } else if (marketId !== undefined) {
             const [ baseId, quoteId ] = marketId.split ('-');
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             symbol = base + '/' + quote;
         }
         const last = this.safeFloat (ticker, 'last');
@@ -518,13 +512,7 @@ module.exports = class crex24 extends Exchange {
         }
         let fee = undefined;
         const feeCurrencyId = this.safeString (trade, 'feeCurrency');
-        const feeCurrency = this.safeValue (this.currencies_by_id, feeCurrencyId);
-        let feeCode = undefined;
-        if (feeCurrency !== undefined) {
-            feeCode = feeCurrency['code'];
-        } else if (market !== undefined) {
-            feeCode = market['quote'];
-        }
+        const feeCode = this.safeCurrencyCode (feeCurrencyId);
         const feeCost = this.safeFloat (trade, 'fee');
         if (feeCost !== undefined) {
             fee = {
@@ -1077,16 +1065,8 @@ module.exports = class crex24 extends Exchange {
         const address = this.safeString (transaction, 'address');
         const tag = this.safeString (transaction, 'paymentId');
         const txid = this.safeValue (transaction, 'txId');
-        let code = undefined;
         const currencyId = this.safeString (transaction, 'currency');
-        if (currencyId in this.currencies_by_id) {
-            currency = this.currencies_by_id[currencyId];
-        } else {
-            code = this.commonCurrencyCode (currencyId);
-        }
-        if (currency !== undefined) {
-            code = currency['code'];
-        }
+        const code = this.safeCurrencyCode (currencyId, currency);
         const type = this.safeString (transaction, 'type');
         const timestamp = this.parse8601 (this.safeString (transaction, 'createdAt'));
         const updated = this.parse8601 (this.safeString (transaction, 'processedAt'));
@@ -1182,12 +1162,12 @@ module.exports = class crex24 extends Exchange {
                 auth += body;
             }
             const signature = this.stringToBase64 (this.hmac (this.encode (auth), secret, 'sha512', 'binary'));
-            headers['X-CREX24-API-SIGN'] = signature;
+            headers['X-CREX24-API-SIGN'] = this.decode (signature);
         }
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body, response) {
+    handleErrors (code, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (!this.isJsonEncodedObject (body)) {
             return; // fallback to default error handler
         }

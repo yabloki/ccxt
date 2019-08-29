@@ -146,8 +146,8 @@ class tidebit (Exchange):
             id = self.safe_string(market, 'id')
             symbol = self.safe_string(market, 'name')
             baseId, quoteId = symbol.split('/')
-            base = self.common_currency_code(baseId)
-            quote = self.common_currency_code(quoteId)
+            base = self.safe_currency_code(baseId)
+            quote = self.safe_currency_code(quoteId)
             result.append({
                 'id': id,
                 'symbol': symbol,
@@ -162,22 +162,15 @@ class tidebit (Exchange):
     async def fetch_balance(self, params={}):
         await self.load_markets()
         response = await self.privateGetMembersMe(params)
-        balances = response['accounts']
+        balances = self.safe_value(response, 'accounts')
         result = {'info': balances}
-        for b in range(0, len(balances)):
-            balance = balances[b]
-            currencyId = balance['currency']
-            code = currencyId.upper()
-            if currencyId in self.currencies_by_id:
-                code = self.currencies_by_id[currencyId]['code']
-            else:
-                code = self.common_currency_code(code)
-            account = {
-                'free': self.safe_float(balance, 'balance'),
-                'used': self.safe_float(balance, 'locked'),
-                'total': 0.0,
-            }
-            account['total'] = self.sum(account['free'], account['used'])
+        for i in range(0, len(balances)):
+            balance = balances[i]
+            currencyId = self.safe_string(balance, 'currency')
+            code = self.safe_currency_code(currencyId)
+            account = self.account()
+            account['free'] = self.safe_float(balance, 'balance')
+            account['used'] = self.safe_float(balance, 'locked')
             result[code] = account
         return self.parse_balance(result)
 
@@ -187,18 +180,16 @@ class tidebit (Exchange):
         request = {
             'market': market['id'],
         }
-        if limit is None:
+        if limit is not None:
             request['limit'] = limit  # default = 300
         request['market'] = market['id']
         response = await self.publicGetDepth(self.extend(request, params))
-        timestamp = self.safe_integer(response, 'timestamp')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp(response, 'timestamp')
         return self.parse_order_book(response, timestamp)
 
     def parse_ticker(self, ticker, market=None):
-        timestamp = ticker['at'] * 1000
-        ticker = ticker['ticker']
+        timestamp = self.safe_timestamp(ticker, 'at')
+        ticker = self.safe_value(ticker, 'ticker', {})
         symbol = None
         if market is not None:
             symbol = market['symbol']
@@ -239,12 +230,10 @@ class tidebit (Exchange):
                 market = self.markets_by_id[id]
                 symbol = market['symbol']
             else:
-                base = id[0:3]
-                quote = id[3:6]
-                base = base.upper()
-                quote = quote.upper()
-                base = self.common_currency_code(base)
-                quote = self.common_currency_code(quote)
+                baseId = id[0:3]
+                quoteId = id[3:6]
+                base = self.safe_currency_code(baseId)
+                quote = self.safe_currency_code(quoteId)
                 symbol = base + '/' + quote
             ticker = tickers[id]
             result[symbol] = self.parse_ticker(ticker, market)
@@ -270,15 +259,18 @@ class tidebit (Exchange):
             symbol = market['symbol']
         return {
             'id': id,
+            'info': trade,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
             'symbol': symbol,
             'type': None,
             'side': None,
+            'order': None,
+            'takerOrMaker': None,
             'price': price,
             'amount': amount,
             'cost': cost,
-            'info': trade,
+            'fee': None,
         }
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -311,10 +303,12 @@ class tidebit (Exchange):
             'limit': limit,
         }
         if since is not None:
-            request['timestamp'] = since
+            request['timestamp'] = int(since / 1000)
         else:
             request['timestamp'] = 1800000
         response = await self.publicGetK(self.extend(request, params))
+        if response == 'null':
+            return []
         return self.parse_ohlcvs(response, market, timeframe, since, limit)
 
     def parse_order_status(self, status):
@@ -400,7 +394,7 @@ class tidebit (Exchange):
         request = {
             'id': id,
             'currency_type': 'coin',  # or 'cash'
-            'currency': currency.lower(),
+            'currency': currency['id'],
             'body': amount,
             # 'address': address,  # they don't allow withdrawing to direct addresses?
         }
@@ -443,7 +437,7 @@ class tidebit (Exchange):
                 headers = {'Content-Type': 'application/x-www-form-urlencoded'}
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, code, reason, url, method, headers, body, response):
+    def handle_errors(self, code, reason, url, method, headers, body, response, requestHeaders, requestBody):
         if code == 400:
             error = self.safe_value(response, 'error')
             errorCode = self.safe_string(error, 'code')

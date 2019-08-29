@@ -31,6 +31,7 @@ class mercado (Exchange):
                 'fetchTickers': False,
             },
             'timeframes': {
+                '1m': '1m',
                 '5m': '5m',
                 '15m': '15m',
                 '30m': '30m',
@@ -120,9 +121,7 @@ class mercado (Exchange):
         }
         response = await self.publicGetCoinTicker(self.extend(request, params))
         ticker = self.safe_value(response, 'ticker', {})
-        timestamp = self.safe_integer(ticker, 'date')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp(ticker, 'date')
         last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
@@ -147,19 +146,34 @@ class mercado (Exchange):
             'info': ticker,
         }
 
-    def parse_trade(self, trade, market):
-        timestamp = trade['date'] * 1000
+    def parse_trade(self, trade, market=None):
+        timestamp = self.safe_timestamp(trade, 'date')
+        symbol = None
+        if market is not None:
+            symbol = market['symbol']
+        id = self.safe_string(trade, 'tid')
+        type = None
+        side = self.safe_string(trade, 'type')
+        price = self.safe_float(trade, 'price')
+        amount = self.safe_float(trade, 'amount')
+        cost = None
+        if price is not None:
+            if amount is not None:
+                cost = price * amount
         return {
+            'id': id,
             'info': trade,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'symbol': market['symbol'],
-            'id': str(trade['tid']),
+            'symbol': symbol,
             'order': None,
-            'type': None,
-            'side': trade['type'],
-            'price': trade['price'],
-            'amount': trade['amount'],
+            'type': type,
+            'side': side,
+            'takerOrMaker': None,
+            'price': price,
+            'amount': amount,
+            'cost': cost,
+            'fee': None,
         }
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -181,19 +195,19 @@ class mercado (Exchange):
     async def fetch_balance(self, params={}):
         await self.load_markets()
         response = await self.privatePostGetAccountInfo(params)
-        balances = self.safe_value(response['response_data'], 'balance')
+        data = self.safe_value(response, 'response_data', {})
+        balances = self.safe_value(data, 'balance', {})
         result = {'info': response}
-        currencies = list(self.currencies.keys())
-        for i in range(0, len(currencies)):
-            code = currencies[i]
-            currencyId = self.currencyId(code)
-            lowercase = currencyId.lower()
-            account = self.account()
-            if lowercase in balances:
-                account['free'] = float(balances[lowercase]['available'])
-                account['total'] = float(balances[lowercase]['total'])
-                account['used'] = account['total'] - account['free']
-            result[code] = account
+        currencyIds = list(balances.keys())
+        for i in range(0, len(currencyIds)):
+            currencyId = currencyIds[i]
+            code = self.safe_currency_code(currencyId)
+            if currencyId in balances:
+                balance = self.safe_value(balances, currencyId, {})
+                account = self.account()
+                account['free'] = self.safe_float(balance, 'available')
+                account['total'] = self.safe_float(balance, 'total')
+                result[code] = account
         return self.parse_balance(result)
 
     async def create_order(self, symbol, type, side, amount, price=None, params={}):
@@ -303,9 +317,7 @@ class mercado (Exchange):
             market = self.safe_value(self.markets_by_id, marketId)
         if market is not None:
             symbol = market['symbol']
-        timestamp = self.safe_integer(order, 'created_timestamp')
-        if timestamp is not None:
-            timestamp = timestamp * 1000
+        timestamp = self.safe_timestamp(order, 'created_timestamp')
         fee = {
             'cost': self.safe_float(order, 'fee'),
             'currency': market['quote'],
@@ -317,9 +329,7 @@ class mercado (Exchange):
         filled = self.safe_float(order, 'executed_quantity')
         remaining = amount - filled
         cost = filled * average
-        lastTradeTimestamp = self.safe_integer(order, 'updated_timestamp')
-        if lastTradeTimestamp is not None:
-            lastTradeTimestamp = lastTradeTimestamp * 1000
+        lastTradeTimestamp = self.safe_timestamp(order, 'updated_timestamp')
         return {
             'info': order,
             'id': id,
@@ -384,11 +394,8 @@ class mercado (Exchange):
         }
 
     def parse_ohlcv(self, ohlcv, market=None, timeframe='1m', since=None, limit=None):
-        timestamp = self.safe_integer(ohlcv, 'timestamp')
-        if timestamp is not None:
-            timestamp = timestamp * 1000
         return [
-            timestamp,
+            self.safe_timestamp(ohlcv, 'timestamp'),
             self.safe_float(ohlcv, 'open'),
             self.safe_float(ohlcv, 'high'),
             self.safe_float(ohlcv, 'low'),
@@ -413,7 +420,8 @@ class mercado (Exchange):
             request['to'] = self.seconds()
             request['from'] = request['to'] - (limit * self.parse_timeframe(timeframe))
         response = await self.v4PublicGetCoinCandle(self.extend(request, params))
-        return self.parse_ohlcvs(response['candles'], market, timeframe, since, limit)
+        candles = self.safe_value(response, 'candles', [])
+        return self.parse_ohlcvs(candles, market, timeframe, since, limit)
 
     async def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
         if symbol is None:
@@ -421,7 +429,7 @@ class mercado (Exchange):
         await self.load_markets()
         market = self.market(symbol)
         request = {
-            'coin_pair': market['base'],
+            'coin_pair': market['id'],
         }
         response = await self.privatePostListOrders(self.extend(request, params))
         responseData = self.safe_value(response, 'response_data', {})

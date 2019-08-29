@@ -82,17 +82,14 @@ class paymium extends Exchange {
         for ($i = 0; $i < count ($currencies); $i++) {
             $code = $currencies[$i];
             $currencyId = $this->currencyId ($code);
-            $account = $this->account ();
-            $balance = 'balance_' . $currencyId;
-            $locked = 'locked_' . $currencyId;
-            if (is_array($response) && array_key_exists($balance, $response)) {
-                $account['free'] = $response[$balance];
+            $free = 'balance_' . $currencyId;
+            if (is_array($response) && array_key_exists($free, $response)) {
+                $account = $this->account ();
+                $used = 'locked_' . $currencyId;
+                $account['free'] = $this->safe_float($response, $free);
+                $account['used'] = $this->safe_float($response, $used);
+                $result[$code] = $account;
             }
-            if (is_array($response) && array_key_exists($locked, $response)) {
-                $account['used'] = $response[$locked];
-            }
-            $account['total'] = $this->sum ($account['free'], $account['used']);
-            $result[$code] = $account;
         }
         return $this->parse_balance($result);
     }
@@ -111,10 +108,7 @@ class paymium extends Exchange {
             'id' => $this->market_id($symbol),
         );
         $ticker = $this->publicGetDataIdTicker (array_merge ($request, $params));
-        $timestamp = $this->safe_integer($ticker, 'at');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($ticker, 'at');
         $vwap = $this->safe_float($ticker, 'vwap');
         $baseVolume = $this->safe_float($ticker, 'volume');
         $quoteVolume = null;
@@ -147,10 +141,7 @@ class paymium extends Exchange {
     }
 
     public function parse_trade ($trade, $market) {
-        $timestamp = $this->safe_integer($trade, 'created_at_int');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($trade, 'created_at_int');
         $id = $this->safe_string($trade, 'uuid');
         $symbol = null;
         if ($market !== null) {
@@ -175,9 +166,11 @@ class paymium extends Exchange {
             'symbol' => $symbol,
             'type' => null,
             'side' => $side,
+            'takerOrMaker' => null,
             'price' => $price,
             'amount' => $amount,
             'cost' => $cost,
+            'fee' => null,
         );
     }
 

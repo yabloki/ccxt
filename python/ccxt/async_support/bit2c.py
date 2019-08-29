@@ -33,6 +33,7 @@ class bit2c (Exchange):
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766119-3593220e-5ece-11e7-8b3a-5a041f6bcc3f.jpg',
                 'api': 'https://bit2c.co.il',
                 'www': 'https://www.bit2c.co.il',
+                'referral': 'https://bit2c.co.il/Aff/63bfed10-e359-420c-ab5a-ad368dab0baf',
                 'doc': [
                     'https://www.bit2c.co.il/home/api',
                     'https://github.com/OferE/bit2c',
@@ -147,12 +148,11 @@ class bit2c (Exchange):
         for i in range(0, len(codes)):
             code = codes[i]
             account = self.account()
-            currency = self.currency(code)
-            uppercase = currency['id'].upper()
+            currencyId = self.currencyId(code)
+            uppercase = currencyId.upper()
             if uppercase in balance:
                 account['free'] = self.safe_float(balance, 'AVAILABLE_' + uppercase)
                 account['total'] = self.safe_float(balance, uppercase)
-                account['used'] = account['total'] - account['free']
             result[code] = account
         return self.parse_balance(result)
 
@@ -291,7 +291,6 @@ class bit2c (Exchange):
     async def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
         await self.load_markets()
         market = None
-        method = 'privateGetOrderOrderhistory'
         request = {}
         if limit is not None:
             request['take'] = limit
@@ -302,7 +301,7 @@ class bit2c (Exchange):
         if symbol is not None:
             market = self.market(symbol)
             request['pair'] = market['id']
-        response = await getattr(self, method)(self.extend(request, params))
+        response = await self.privateGetOrderOrderHistory(self.extend(request, params))
         return self.parse_trades(response, market, since, limit)
 
     def parse_trade(self, trade, market=None):
@@ -315,7 +314,7 @@ class bit2c (Exchange):
         side = None
         reference = self.safe_string(trade, 'reference')
         if reference is not None:
-            timestamp = self.safe_integer(trade, 'ticks') * 1000
+            timestamp = self.safe_timestamp(trade, 'ticks')
             price = self.safe_float(trade, 'price')
             amount = self.safe_float(trade, 'firstAmount')
             reference_parts = reference.split('|')  # reference contains: 'pair|orderId|tradeId'
@@ -334,7 +333,7 @@ class bit2c (Exchange):
                 side = 'sell'
             feeCost = self.safe_float(trade, 'feeAmount')
         else:
-            timestamp = self.safe_integer(trade, 'date') * 1000
+            timestamp = self.safe_timestamp(trade, 'date')
             id = self.safe_string(trade, 'tid')
             price = self.safe_float(trade, 'price')
             amount = self.safe_float(trade, 'amount')
@@ -370,9 +369,7 @@ class bit2c (Exchange):
     def sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
         url = self.urls['api'] + '/' + self.implode_params(path, params)
         if api == 'public':
-            # lasttrades is the only endpoint that doesn't require the .json extension/suffix
-            if path.find('lasttrades') < 0:
-                url += '.json'
+            url += '.json'
         else:
             self.check_required_credentials()
             nonce = self.nonce()

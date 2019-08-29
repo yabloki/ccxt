@@ -65,10 +65,10 @@ class btcturk extends Exchange {
         for ($i = 0; $i < count ($response); $i++) {
             $market = $response[$i];
             $id = $this->safe_string($market, 'pair');
-            $baseId = mb_substr ($id, 0, 3);
-            $quoteId = mb_substr ($id, 3, 6);
-            $base = $this->common_currency_code($baseId);
-            $quote = $this->common_currency_code($quoteId);
+            $baseId = mb_substr($id, 0, 3 - 0);
+            $quoteId = mb_substr($id, 3, 6 - 3);
+            $base = $this->safe_currency_code($baseId);
+            $quote = $this->safe_currency_code($quoteId);
             $baseId = strtolower($baseId);
             $quoteId = strtolower($quoteId);
             $symbol = $base . '/' . $quote;
@@ -114,16 +114,16 @@ class btcturk extends Exchange {
         for ($i = 0; $i < count ($codes); $i++) {
             $code = $codes[$i];
             $currency = $this->currencies[$code];
-            $account = $this->account ();
             $free = $currency['id'] . '_available';
             $total = $currency['id'] . '_balance';
             $used = $currency['id'] . '_reserved';
             if (is_array($response) && array_key_exists($free, $response)) {
+                $account = $this->account ();
                 $account['free'] = $this->safe_float($response, $free);
                 $account['total'] = $this->safe_float($response, $total);
                 $account['used'] = $this->safe_float($response, $used);
+                $result[$code] = $account;
             }
-            $result[$code] = $account;
         }
         return $this->parse_balance($result);
     }
@@ -135,10 +135,7 @@ class btcturk extends Exchange {
             'pairSymbol' => $market['id'],
         );
         $response = $this->publicGetOrderbook (array_merge ($request, $params));
-        $timestamp = $this->safe_integer($response, 'timestamp');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($response, 'timestamp');
         return $this->parse_order_book($response, $timestamp);
     }
 
@@ -147,10 +144,7 @@ class btcturk extends Exchange {
         if ($market) {
             $symbol = $market['symbol'];
         }
-        $timestamp = $this->safe_integer($ticker, 'timestamp');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+        $timestamp = $this->safe_timestamp($ticker, 'timestamp');
         $last = $this->safe_float($ticker, 'last');
         return array (
             'symbol' => $symbol,
@@ -201,11 +195,8 @@ class btcturk extends Exchange {
         return $this->safe_value_2($tickers, $market['id'], $symbol);
     }
 
-    public function parse_trade ($trade, $market) {
-        $timestamp = $this->safe_integer($trade, 'date');
-        if ($timestamp !== null) {
-            $timestamp *= 1000;
-        }
+    public function parse_trade ($trade, $market = null) {
+        $timestamp = $this->safe_timestamp($trade, 'date');
         $id = $this->safe_string($trade, 'tid');
         $price = $this->safe_float($trade, 'price');
         $amount = $this->safe_float($trade, 'amount');
@@ -215,17 +206,24 @@ class btcturk extends Exchange {
                 $cost = $amount * $price;
             }
         }
+        $symbol = null;
+        if ($market !== null) {
+            $symbol = $market['symbol'];
+        }
         return array (
             'id' => $id,
             'info' => $trade,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
-            'symbol' => $market['symbol'],
+            'symbol' => $symbol,
             'type' => null,
             'side' => null,
+            'order' => null,
+            'takerOrMaker' => null,
             'price' => $price,
             'amount' => $amount,
             'cost' => $cost,
+            'fee' => null,
         );
     }
 

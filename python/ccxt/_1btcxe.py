@@ -107,9 +107,8 @@ class _1btcxe (Exchange):
             currency = self.currency(code)
             currencyId = currency['id']
             account = self.account()
-            account['free'] = self.safe_float(balance['available'], currencyId, 0.0)
-            account['used'] = self.safe_float(balance['on_hold'], currencyId, 0.0)
-            account['total'] = self.sum(account['free'], account['used'])
+            account['free'] = self.safe_float(balance['available'], currencyId)
+            account['used'] = self.safe_float(balance['on_hold'], currencyId)
             result[code] = account
         return self.parse_balance(result)
 
@@ -170,9 +169,7 @@ class _1btcxe (Exchange):
         return self.parse_ohlcvs(ohlcvs, market, timeframe, since, limit)
 
     def parse_trade(self, trade, market=None):
-        timestamp = self.safe_integer(trade, 'timestamp')
-        if timestamp is not None:
-            timestamp *= 1000
+        timestamp = self.safe_timestamp(trade, 'timestamp')
         id = self.safe_string(trade, 'id')
         symbol = None
         if market is not None:
@@ -194,9 +191,11 @@ class _1btcxe (Exchange):
             'order': None,
             'type': type,
             'side': side,
+            'takerOrMaker': None,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': None,
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):

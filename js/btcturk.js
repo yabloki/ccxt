@@ -66,8 +66,8 @@ module.exports = class btcturk extends Exchange {
             const id = this.safeString (market, 'pair');
             let baseId = id.slice (0, 3);
             let quoteId = id.slice (3, 6);
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             baseId = baseId.toLowerCase ();
             quoteId = quoteId.toLowerCase ();
             const symbol = base + '/' + quote;
@@ -113,16 +113,16 @@ module.exports = class btcturk extends Exchange {
         for (let i = 0; i < codes.length; i++) {
             const code = codes[i];
             const currency = this.currencies[code];
-            const account = this.account ();
             const free = currency['id'] + '_available';
             const total = currency['id'] + '_balance';
             const used = currency['id'] + '_reserved';
             if (free in response) {
+                const account = this.account ();
                 account['free'] = this.safeFloat (response, free);
                 account['total'] = this.safeFloat (response, total);
                 account['used'] = this.safeFloat (response, used);
+                result[code] = account;
             }
-            result[code] = account;
         }
         return this.parseBalance (result);
     }
@@ -134,10 +134,7 @@ module.exports = class btcturk extends Exchange {
             'pairSymbol': market['id'],
         };
         const response = await this.publicGetOrderbook (this.extend (request, params));
-        let timestamp = this.safeInteger (response, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (response, 'timestamp');
         return this.parseOrderBook (response, timestamp);
     }
 
@@ -146,10 +143,7 @@ module.exports = class btcturk extends Exchange {
         if (market) {
             symbol = market['symbol'];
         }
-        let timestamp = this.safeInteger (ticker, 'timestamp');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+        const timestamp = this.safeTimestamp (ticker, 'timestamp');
         const last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
@@ -200,11 +194,8 @@ module.exports = class btcturk extends Exchange {
         return this.safeValue2 (tickers, market['id'], symbol);
     }
 
-    parseTrade (trade, market) {
-        let timestamp = this.safeInteger (trade, 'date');
-        if (timestamp !== undefined) {
-            timestamp *= 1000;
-        }
+    parseTrade (trade, market = undefined) {
+        const timestamp = this.safeTimestamp (trade, 'date');
         const id = this.safeString (trade, 'tid');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'amount');
@@ -214,17 +205,24 @@ module.exports = class btcturk extends Exchange {
                 cost = amount * price;
             }
         }
+        let symbol = undefined;
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         return {
             'id': id,
             'info': trade,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'type': undefined,
             'side': undefined,
+            'order': undefined,
+            'takerOrMaker': undefined,
             'price': price,
             'amount': amount,
             'cost': cost,
+            'fee': undefined,
         };
     }
 
